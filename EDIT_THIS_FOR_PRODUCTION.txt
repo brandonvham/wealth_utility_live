@@ -1,0 +1,13 @@
+✅ THIS IS THE PRODUCTION FOLDER
+
+Edit files HERE to update:
+- GitHub
+- Railway deployment
+- Lovable webapp
+
+After editing:
+1. Double-click quick_push.bat
+2. Enter commit message
+3. Wait 3 minutes for Railway
+
+Your changes will go live automatically!
