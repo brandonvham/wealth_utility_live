@@ -1,0 +1,92 @@
+# API Keys and Environment Variables
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Cache directories
+.minute_cache/
+*.cache
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/settings.local.json
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Output files (results, reports, generated documents)
+merton_results.csv
+monthly_weight_return_audit.csv
+wealth_utility_tear_sheet.html
+Quantitative_Strategy_Review.docx
+*_results.csv
+*_audit.csv
+*_tear_sheet.html
+*_Review.docx
+portfolio_diagnostics_dashboard.html
+parameter_optimization_results.html
+portfolio_diagnostics_dashboard.pdf
+parameter_optimization_results.pdf
+
+# Keep input data files (ecy4.csv, ecy4.xlsx are tracked intentionally)
+
+# Temporary analysis/diagnostic files
+*_section.txt
+*_function.txt
+*_result.txt
+cell*.txt
+band_calib_*.txt
+cagr_*.txt
+first_*.txt
+last_*.txt
+nav_*.txt
+tear_*.txt
+update_*.txt
+
+# Production allocation output
+current_allocation.txt
+
+# Deployment
+.railway/
+
+# Logs
+*.log
