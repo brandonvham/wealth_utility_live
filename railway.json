@@ -1,0 +1,14 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "pip install -r requirements_api.txt"
+  },
+  "deploy": {
+    "startCommand": "gunicorn wealth_utility_api:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 100,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  }
+}
