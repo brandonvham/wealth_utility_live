@@ -13,6 +13,7 @@ import os
 # (We'll import the main calculation function)
 from wealth_utility_production import (
     calculate_current_allocations,
+    run_backtest,
     START_DATE,
     EQUITY_TICKER,
     NON_EQUITY_TICKER,
@@ -66,6 +67,13 @@ _cache = {
     'data': None,
     'timestamp': None,
     'cache_duration_minutes': 60  # Cache for 1 hour
+}
+
+# Separate cache for backtest results (more expensive computation)
+_backtest_cache = {
+    'data': None,
+    'timestamp': None,
+    'cache_duration_minutes': 120  # Cache for 2 hours
 }
 
 
@@ -284,12 +292,15 @@ def home():
     """Home endpoint with API documentation"""
     return jsonify({
         "name": "Wealth Utility API",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "endpoints": {
             "/": "This help page",
             "/allocations": "Get current portfolio allocations (GET)",
             "/allocations/refresh": "Force refresh allocations (POST)",
-            "/health": "Health check endpoint"
+            "/backtest": "Run historical backtest with performance metrics (GET)",
+            "/backtest/refresh": "Force refresh backtest (POST)",
+            "/config": "Get strategy configuration (GET)",
+            "/health": "Health check endpoint (GET)"
         },
         "status": "online"
     })
@@ -344,11 +355,105 @@ def get_config():
     })
 
 
+@app.route('/backtest', methods=['GET'])
+def get_backtest():
+    """
+    Run full historical backtest and return performance metrics.
+
+    Query parameters:
+    - start_date: Optional start date (YYYY-MM-DD format)
+    - end_date: Optional end date (YYYY-MM-DD format)
+    - force_refresh: Set to 'true' to bypass cache
+
+    Returns cached data if available and fresh, unless force_refresh=true.
+    """
+    now = datetime.now()
+
+    # Check for force refresh parameter
+    force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
+
+    # Check if we have cached data that's still valid
+    if not force_refresh and _backtest_cache['data'] is not None and _backtest_cache['timestamp'] is not None:
+        age_minutes = (now - _backtest_cache['timestamp']).total_seconds() / 60
+        if age_minutes < _backtest_cache['cache_duration_minutes']:
+            print(f"[BACKTEST CACHE] Returning cached data (age: {age_minutes:.1f} minutes)")
+            return jsonify(_backtest_cache['data'])
+
+    print("[BACKTEST] Calculating fresh backtest...")
+
+    try:
+        # Get optional date parameters
+        start_date = request.args.get('start_date', None)
+        end_date = request.args.get('end_date', None)
+
+        # Run backtest
+        result = run_backtest(start_date=start_date, end_date=end_date)
+
+        # Add metadata
+        result['success'] = True
+        result['calculation_timestamp'] = now.isoformat()
+
+        # Update cache
+        _backtest_cache['data'] = result
+        _backtest_cache['timestamp'] = now
+
+        return jsonify(result)
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "calculation_timestamp": now.isoformat()
+        }), 500
+
+
+@app.route('/backtest/refresh', methods=['POST'])
+def refresh_backtest():
+    """
+    Force refresh backtest (bypass cache).
+    """
+    # Clear cache
+    _backtest_cache['data'] = None
+    _backtest_cache['timestamp'] = None
+
+    # Run fresh backtest
+    now = datetime.now()
+    print("[BACKTEST] Force refresh requested...")
+
+    try:
+        # Get optional date parameters from query string
+        start_date = request.args.get('start_date', None)
+        end_date = request.args.get('end_date', None)
+
+        result = run_backtest(start_date=start_date, end_date=end_date)
+
+        # Add metadata
+        result['success'] = True
+        result['calculation_timestamp'] = now.isoformat()
+
+        # Update cache
+        _backtest_cache['data'] = result
+        _backtest_cache['timestamp'] = now
+
+        return jsonify(result)
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "calculation_timestamp": now.isoformat()
+        }), 500
+
+
 if __name__ == '__main__':
     # Run the Flask development server
     # For production, use a WSGI server like Gunicorn
     print("=" * 80)
-    print("WEALTH UTILITY API SERVER")
+    print("WEALTH UTILITY API SERVER v2.0.0")
     print("=" * 80)
     print("Starting Flask development server...")
     print("API will be available at: http://localhost:5000")
@@ -357,6 +462,8 @@ if __name__ == '__main__':
     print("  GET  http://localhost:5000/")
     print("  GET  http://localhost:5000/allocations")
     print("  POST http://localhost:5000/allocations/refresh")
+    print("  GET  http://localhost:5000/backtest")
+    print("  POST http://localhost:5000/backtest/refresh")
     print("  GET  http://localhost:5000/config")
     print("  GET  http://localhost:5000/health")
     print("=" * 80)

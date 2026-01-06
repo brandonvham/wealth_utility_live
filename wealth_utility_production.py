@@ -864,6 +864,332 @@ def calculate_current_allocations():
     return allocations
 
 
+def perf_stats(nav: pd.Series, rf_monthly: Optional[pd.Series] = None) -> dict:
+    """
+    Calculate performance statistics for a NAV series.
+
+    Args:
+        nav: Series of NAV values (already cumulative product starting at 1.0)
+        rf_monthly: Optional series of monthly risk-free rates
+
+    Returns:
+        Dictionary of performance metrics
+    """
+    nav = nav.dropna()
+    ret = nav.pct_change().dropna()
+    if len(ret) == 0:
+        return {}
+    ann = 12
+    sqrt_ann = np.sqrt(ann)
+    cagr = nav.iloc[-1]**(ann/len(ret)) - 1
+    vol  = ret.std(ddof=0) * sqrt_ann
+    mdd  = (nav / nav.cummax() - 1).min()
+    sh_total = (ret.mean() / (ret.std(ddof=0) + 1e-12)) * sqrt_ann
+    out = {
+        "CAGR": cagr, "AnnVol": vol, "MaxDD": mdd, "Sharpe": sh_total,
+        "Start": nav.index[0].strftime('%Y-%m-%d'),
+        "End": nav.index[-1].strftime('%Y-%m-%d'),
+        "Months": len(ret),
+    }
+    if rf_monthly is not None and rf_monthly.reindex(ret.index).notna().any():
+        ex = ret - rf_monthly.reindex(ret.index).fillna(0.0)
+        sh_ex = (ex.mean() / (ex.std(ddof=0) + 1e-12)) * sqrt_ann
+        out["Sharpe_excess"] = sh_ex
+    return out
+
+
+def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = None) -> dict:
+    """
+    Run full historical backtest and return performance metrics, equity curves, and allocations.
+
+    Args:
+        start_date: Optional start date (defaults to START_DATE constant)
+        end_date: Optional end date (defaults to today)
+
+    Returns:
+        Dictionary with backtest results including performance metrics, equity curve,
+        monthly returns, drawdowns, and allocation history
+    """
+    start = start_date or START_DATE
+    end = end_date or _end_date()
+
+    # Load data (same as calculate_current_allocations)
+    us_val = read_us_valuation_from_excel(ECY_XLSX_PATH, ECY_SHEET)
+    tips = fetch_fred_dfii10(start, end, FRED_KEY)
+
+    eq_m, _eq_W_target, _eq_W_exec, _eq_P = build_equity_sleeve_monthly(
+        EQUITY_TICKER, start, end, FMP_KEY,
+        method=EQUITY_SLEEVE_METHOD,
+        lookback_m=EQUITY_SLEEVE_LOOKBACK_M,
+        warmup_m=EQUITY_SLEEVE_WARMUP_M,
+        max_cap=EQUITY_MAX_WEIGHT_PER_ASSET,
+        cov_shrinkage=EQUITY_COV_SHRINKAGE,
+        ridge_lambda=EQUITY_RIDGE_LAMBDA,
+        clusters=EQUITY_CLUSTERS,
+        cluster_risk_budgets=EQUITY_CLUSTER_RISK_BUDGETS,
+        benchmark_symbol=BENCHMARK_TICKER,
+    )
+
+    ne_m = monthly_from_daily_price(fetch_fmp_daily(NON_EQUITY_TICKER, start, end, FMP_KEY))
+    bm_m = monthly_from_daily_price(fetch_fmp_daily(BENCHMARK_TICKER, start, end, FMP_KEY))
+
+    # Common index
+    idx = eq_m.index.intersection(ne_m.index).intersection(bm_m.index)
+    idx = idx[idx >= pd.to_datetime(START_DATE).to_period("M").to_timestamp("M")]
+
+    # Align valuation & TIPS
+    rp_used = us_val["RP_USED"].reindex(idx)
+    if rp_used.isna().mean() > 0.50:
+        rp_used = us_val["RP_USED"].reindex(idx, method="nearest", tolerance=pd.Timedelta(days=3))
+    rp_used = pd.to_numeric(rp_used, errors="coerce").ffill().bfill()
+
+    tips_m = tips["tips10"].reindex(idx)
+    if tips_m.isna().mean() > 0.50:
+        tips_m = tips["tips10"].reindex(idx, method="nearest", tolerance=pd.Timedelta(days=3))
+    tips_m = pd.to_numeric(tips_m, errors="coerce").ffill().bfill()
+
+    # Build panel
+    panel = pd.DataFrame(index=idx)
+    panel["eq_ret"], panel["eq_tri"] = eq_m.loc[idx,"mret"].astype(float), eq_m.loc[idx,"tri"].astype(float)
+    panel["ne_ret"], panel["ne_tri"] = ne_m.loc[idx,"mret"].astype(float), ne_m.loc[idx,"tri"].astype(float)
+    panel["bm_ret"], panel["bm_tri"] = bm_m.loc[idx,"mret"].astype(float), bm_m.loc[idx,"tri"].astype(float)
+    panel["RP_USED"] = rp_used
+    panel["tips10"]  = tips_m
+    panel["RP"]      = panel["RP_USED"] - panel["tips10"]
+
+    # Momentum state
+    maN = panel["eq_tri"].rolling(int(MOM_LOOKBACK_M)).mean()
+    panel["MOM_STATE"] = np.where(panel["eq_tri"] > maN, 1, -1)
+    panel.loc[maN.isna(), "MOM_STATE"] = 0
+
+    # Normalize dials
+    VALUE_DIAL = _to_frac(VALUE_DIAL_FRAC) or 0.0
+    MOM_BUMP = _to_frac(MOM_BUMP_FRAC) or 0.0
+
+    # RP anchor
+    if RP_ANCHOR_MODE == "median":
+        rp_anchor = float(panel["RP"].median(skipna=True))
+    elif RP_ANCHOR_MODE == "mean":
+        rp_anchor = float(panel["RP"].mean(skipna=True))
+    else:
+        rp_anchor = float(RP_ANCHOR_FIXED)
+
+    # Value center
+    rel_value = (panel["RP"] / rp_anchor) - 1.0
+    value_bump = BASELINE_W * VALUE_DIAL * rel_value
+    w_value = (BASELINE_W + value_bump).clip(0, 1)
+
+    # Momentum bump
+    mom_bump = BASELINE_W * MOM_BUMP * panel["MOM_STATE"]
+    w_uncapped = w_value + mom_bump
+
+    # Risk dial
+    equity_ret = panel["eq_ret"].copy()
+    realized_vol = equity_ret.rolling(int(RISK_LOOKBACK_M)).std(ddof=0) * np.sqrt(12.0)
+
+    if RISK_REF_METHOD == "fixed":
+        vol_ref = pd.Series(RISK_REF_FIXED, index=panel.index, dtype=float)
+    elif RISK_REF_METHOD == "rolling_median":
+        vol_ref = realized_vol.rolling(120, min_periods=12).median()
+    else:
+        const_ref = realized_vol.median(skipna=True)
+        if not np.isfinite(const_ref) or const_ref <= 0:
+            const_ref = 0.15
+        vol_ref = pd.Series(const_ref, index=panel.index, dtype=float)
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        r_raw = (vol_ref / realized_vol)
+    r_raw = r_raw.replace([np.inf, -np.inf], np.nan).fillna(1.0).clip(lower=1e-6, upper=1e6)
+    r_mult = (r_raw ** RISK_POWER).clip(lower=RISK_MULT_MIN, upper=RISK_MULT_MAX)
+
+    # Band construction
+    if BAND_MODE.lower() == "absolute":
+        base_band = pd.Series(float(BAND_ABS), index=panel.index)
+        band_width = base_band.copy()
+        if RISK_DIAL_MODE.lower() == "band":
+            band_width = (base_band * r_mult).clip(0.0, 1.0)
+        lo = (w_value - band_width).astype(float)
+        hi = (w_value + band_width).astype(float)
+    elif BAND_MODE.lower() == "proportional":
+        CAP_DEV = _to_frac(CAP_DEV_FRAC) or 0.0
+        base_band_prop = (CAP_DEV * w_value).astype(float)
+        band_width = base_band_prop.copy()
+        if RISK_DIAL_MODE.lower() == "band":
+            band_width = (base_band_prop * r_mult).clip(0.0, 1.0)
+        lo = (w_value - band_width).astype(float)
+        hi = (w_value + band_width).astype(float)
+
+    w_capped = w_uncapped.clip(lower=lo, upper=hi)
+
+    if RISK_DIAL_MODE.lower() == "scale":
+        w_capped = (w_capped * r_mult).clip(0.0, 1.0)
+
+    # Final target weight
+    f_min_frac = _to_frac(f_min) or 0.0
+    f_max_frac = _to_frac(f_max) or 1.0
+    panel["w_target"] = w_capped.clip(f_min_frac, f_max_frac).clip(0, 1)
+
+    # Execution lag
+    panel["w_exec"] = panel["w_target"].shift(1)
+    first_idx = panel["w_exec"].first_valid_index()
+    if first_idx is not None and pd.isna(panel.loc[first_idx,"w_exec"]):
+        panel.loc[first_idx,"w_exec"] = BASELINE_W
+    panel["w_exec"] = panel["w_exec"].ffill()
+
+    # Backtest
+    panel["dw"]   = panel["w_exec"].diff().abs().fillna(0.0)
+    panel["cost"] = (TURNOVER_BPS/10000.0) * panel["dw"]
+
+    gross = panel["w_exec"]*panel["eq_ret"] + (1-panel["w_exec"])*panel["ne_ret"]
+    panel["port_ret"] = (gross - panel["cost"]).astype(float)
+
+    panel["port_nav"] = (1 + panel["port_ret"]).cumprod()
+    panel["bm_nav"]   = (1 + panel["bm_ret"]).cumprod()
+    panel["alloc_bench_ret"] = BASELINE_W*panel["bm_ret"] + (1-BASELINE_W)*panel["ne_ret"]
+    panel["alloc_bench_nav"] = (1 + panel["alloc_bench_ret"]).cumprod()
+
+    # Calculate performance stats
+    rf_m = panel["tips10"]/12.0
+    portfolio_stats = perf_stats(panel["port_nav"], rf_m)
+    benchmark_stats = perf_stats(panel["bm_nav"], rf_m)
+    alloc_bench_stats = perf_stats(panel["alloc_bench_nav"], rf_m)
+
+    # Calculate rolling metrics
+    strategy_rets = panel["port_nav"].pct_change()
+    benchmark_rets = panel["bm_nav"].pct_change()
+
+    # Rolling 12-month beta
+    rolling_cov = strategy_rets.rolling(12).cov(benchmark_rets)
+    rolling_var = benchmark_rets.rolling(12).var()
+    rolling_beta = (rolling_cov / rolling_var).fillna(0)
+
+    # Rolling 12-month volatility
+    rolling_vol_strat = strategy_rets.rolling(12).std(ddof=0) * np.sqrt(12)
+    rolling_vol_bench = benchmark_rets.rolling(12).std(ddof=0) * np.sqrt(12)
+
+    # Rolling 12-month Sharpe
+    def rolling_sharpe(returns, rf_monthly_series, window=12):
+        rf_aligned = rf_monthly_series.reindex(returns.index).fillna(0.0)
+        excess = returns - rf_aligned
+        rolling_mean = excess.rolling(window).mean()
+        rolling_std = returns.rolling(window).std(ddof=0)
+        return (rolling_mean / (rolling_std + 1e-12)) * np.sqrt(12)
+
+    rolling_sharpe_strat = rolling_sharpe(strategy_rets, rf_m, window=12)
+    rolling_sharpe_bench = rolling_sharpe(benchmark_rets, rf_m, window=12)
+
+    # Drawdown
+    dd_strat = panel["port_nav"] / panel["port_nav"].cummax() - 1.0
+    dd_bench = panel["bm_nav"] / panel["bm_nav"].cummax() - 1.0
+
+    # Monthly allocation history
+    W_exec_eq = _eq_W_exec.reindex(panel.index).ffill()
+    allocation_history = []
+
+    for dt in panel.index:
+        month_alloc = {
+            "date": dt.strftime('%Y-%m-%d'),
+            "equity_weight": float(panel.loc[dt, "w_exec"]),
+            "safe_weight": float(1.0 - panel.loc[dt, "w_exec"]),
+            "assets": []
+        }
+
+        if isinstance(EQUITY_TICKER, str):
+            month_alloc["assets"].append({
+                "ticker": EQUITY_TICKER,
+                "weight": float(panel.loc[dt, "w_exec"])
+            })
+        else:
+            for tk in EQUITY_TICKER:
+                sleeve_weight = float(W_exec_eq.loc[dt, tk])
+                portfolio_weight = float(panel.loc[dt, "w_exec"]) * sleeve_weight
+                month_alloc["assets"].append({
+                    "ticker": tk,
+                    "weight": portfolio_weight
+                })
+
+        month_alloc["assets"].append({
+            "ticker": NON_EQUITY_TICKER,
+            "weight": float(1.0 - panel.loc[dt, "w_exec"])
+        })
+
+        allocation_history.append(month_alloc)
+
+    # Helper function to clean NaN values for JSON serialization
+    def clean_value(val):
+        """Convert NaN/inf to None for valid JSON"""
+        if isinstance(val, (float, np.floating)):
+            if np.isnan(val) or np.isinf(val):
+                return None
+        return val
+
+    def clean_list(lst):
+        """Clean a list of values"""
+        return [clean_value(v) for v in lst]
+
+    # Prepare result
+    result = {
+        "performance": {
+            "portfolio": portfolio_stats,
+            "benchmark": benchmark_stats,
+            "allocation_benchmark": alloc_bench_stats
+        },
+        "equity_curve": {
+            "dates": [d.strftime('%Y-%m-%d') for d in panel.index],
+            "portfolio": clean_list(panel["port_nav"].tolist()),
+            "benchmark": clean_list(panel["bm_nav"].tolist()),
+            "allocation_benchmark": clean_list(panel["alloc_bench_nav"].tolist())
+        },
+        "monthly_returns": {
+            "dates": [d.strftime('%Y-%m-%d') for d in panel.index],
+            "portfolio": clean_list(panel["port_ret"].tolist()),
+            "benchmark": clean_list(panel["bm_ret"].tolist())
+        },
+        "drawdown": {
+            "dates": [d.strftime('%Y-%m-%d') for d in panel.index],
+            "portfolio": clean_list(dd_strat.tolist()),
+            "benchmark": clean_list(dd_bench.tolist())
+        },
+        "rolling_metrics": {
+            "dates": [d.strftime('%Y-%m-%d') for d in panel.index],
+            "beta_12m": clean_list(rolling_beta.tolist()),
+            "volatility_12m": {
+                "portfolio": clean_list(rolling_vol_strat.tolist()),
+                "benchmark": clean_list(rolling_vol_bench.tolist())
+            },
+            "sharpe_12m": {
+                "portfolio": clean_list(rolling_sharpe_strat.tolist()),
+                "benchmark": clean_list(rolling_sharpe_bench.tolist())
+            }
+        },
+        "allocation_history": [
+            {
+                "date": month["date"],
+                "equity_weight": clean_value(month["equity_weight"]),
+                "safe_weight": clean_value(month["safe_weight"]),
+                "assets": [
+                    {
+                        "ticker": asset["ticker"],
+                        "weight": clean_value(asset["weight"])
+                    }
+                    for asset in month["assets"]
+                ]
+            }
+            for month in allocation_history
+        ],
+        "config": {
+            "equity_tickers": EQUITY_TICKER if isinstance(EQUITY_TICKER, list) else [EQUITY_TICKER],
+            "non_equity_ticker": NON_EQUITY_TICKER,
+            "benchmark_ticker": BENCHMARK_TICKER,
+            "sleeve_method": EQUITY_SLEEVE_METHOD,
+            "start_date": start,
+            "end_date": end
+        }
+    }
+
+    return result
+
+
 def main():
     """
     Main entry point for the production script.
