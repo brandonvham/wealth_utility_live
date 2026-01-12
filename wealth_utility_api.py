@@ -66,14 +66,14 @@ CORS(app)  # Enable CORS for all routes
 _cache = {
     'data': None,
     'timestamp': None,
-    'cache_duration_minutes': 60  # Cache for 1 hour
+    'cache_duration_minutes': 240  # Cache for 4 hours (reduced API calls)
 }
 
 # Separate cache for backtest results (more expensive computation)
 _backtest_cache = {
     'data': None,
     'timestamp': None,
-    'cache_duration_minutes': 120  # Cache for 2 hours
+    'cache_duration_minutes': 480  # Cache for 8 hours (very expensive)
 }
 
 # Risk profile definitions
