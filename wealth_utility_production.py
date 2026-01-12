@@ -47,7 +47,7 @@ if not FRED_KEY:
         "Get your key at: https://fred.stlouisfed.org/"
     )
 
-START_DATE = "2000-01-01"
+START_DATE = "2007-01-01"
 
 # Excel file path - use relative path for deployment
 ECY_XLSX_PATH = os.getenv("ECY_XLSX_PATH", "ecy4.xlsx")
@@ -905,7 +905,7 @@ def perf_stats(nav: pd.Series, rf_monthly: Optional[pd.Series] = None) -> dict:
     return out
 
 
-def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = None, baseline_w: Optional[float] = None) -> dict:
+def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = None, baseline_w: Optional[float] = None, equity_tickers: Optional[list] = None) -> dict:
     """
     Run full historical backtest and return performance metrics, equity curves, and allocations.
 
@@ -913,6 +913,7 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
         start_date: Optional start date (defaults to START_DATE constant)
         end_date: Optional end date (defaults to today)
         baseline_w: Optional baseline equity weight (0.0 to 1.0, defaults to BASELINE_W constant)
+        equity_tickers: Optional list of equity ticker symbols (defaults to EQUITY_TICKER constant)
 
     Returns:
         Dictionary with backtest results including performance metrics, equity curve,
@@ -924,6 +925,9 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
     # Use provided baseline_w or default to constant
     baseline_weight = baseline_w if baseline_w is not None else BASELINE_W
 
+    # Use provided equity_tickers or default to constant
+    equity_ticker_list = equity_tickers if equity_tickers is not None else EQUITY_TICKER
+
     # Validate baseline_w
     if not (0.0 <= baseline_weight <= 1.0):
         raise ValueError(f"baseline_w must be between 0.0 and 1.0, got {baseline_weight}")
@@ -932,8 +936,9 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
     us_val = read_us_valuation_from_excel(ECY_XLSX_PATH, ECY_SHEET)
     tips = fetch_fred_dfii10(start, end, FRED_KEY)
 
+    # Use user-provided equity tickers or default
     eq_m, _eq_W_target, _eq_W_exec, _eq_P = build_equity_sleeve_monthly(
-        EQUITY_TICKER, start, end, FMP_KEY,
+        equity_ticker_list, start, end, FMP_KEY,
         method=EQUITY_SLEEVE_METHOD,
         lookback_m=EQUITY_SLEEVE_LOOKBACK_M,
         warmup_m=EQUITY_SLEEVE_WARMUP_M,
@@ -1111,13 +1116,13 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
             "assets": []
         }
 
-        if isinstance(EQUITY_TICKER, str):
+        if isinstance(equity_ticker_list, str):
             month_alloc["assets"].append({
-                "ticker": EQUITY_TICKER,
+                "ticker": equity_ticker_list,
                 "weight": float(panel.loc[dt, "w_exec"])
             })
         else:
-            for tk in EQUITY_TICKER:
+            for tk in equity_ticker_list:
                 sleeve_weight = float(W_exec_eq.loc[dt, tk])
                 portfolio_weight = float(panel.loc[dt, "w_exec"]) * sleeve_weight
                 month_alloc["assets"].append({

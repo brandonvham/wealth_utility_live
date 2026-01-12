@@ -105,6 +105,10 @@ RISK_PROFILES = {
     }
 }
 
+# Allocations endpoint equity tickers (separate from backtest)
+# This list is used ONLY for /allocations endpoint display
+ALLOCATIONS_EQUITY_TICKERS = ["RPV","RPG","IWR","EFA","QQQ","EEM","VTI","DBC","IYR"]
+
 # Dynamic Fixed Income configuration (for current allocations only)
 FI_SECURITIES = ["PFF", "USIG", "EMB", "ITM", "LQD", "HYG"]
 FI_RESERVES = ["TLT", "BIL"]
@@ -270,8 +274,9 @@ def get_current_allocations_json():
         us_val = read_us_valuation_from_excel(ECY_XLSX_PATH, ECY_SHEET)
         tips = fetch_fred_dfii10(start, end, FRED_KEY)
 
+        # Use ALLOCATIONS_EQUITY_TICKERS for allocations endpoint (separate from backtest)
         eq_m, _eq_W_target, _eq_W_exec, _eq_P = build_equity_sleeve_monthly(
-            EQUITY_TICKER, start, end, FMP_KEY,
+            ALLOCATIONS_EQUITY_TICKERS, start, end, FMP_KEY,
             method=EQUITY_SLEEVE_METHOD,
             lookback_m=EQUITY_SLEEVE_LOOKBACK_M,
             warmup_m=EQUITY_SLEEVE_WARMUP_M,
@@ -375,17 +380,17 @@ def get_current_allocations_json():
             # Build allocation JSON for this profile
             allocations = []
 
-            # Add equity allocations
-            if isinstance(EQUITY_TICKER, str):
+            # Add equity allocations (using ALLOCATIONS_EQUITY_TICKERS)
+            if isinstance(ALLOCATIONS_EQUITY_TICKERS, str):
                 equity_alloc = latest_target_equity_weight * 1.0
                 allocations.append({
-                    "ticker": EQUITY_TICKER,
+                    "ticker": ALLOCATIONS_EQUITY_TICKERS,
                     "asset_class": "equity",
                     "weight": round(equity_alloc, 4),
                     "weight_pct": f"{equity_alloc:.2%}"
                 })
             else:
-                for ticker in EQUITY_TICKER:
+                for ticker in ALLOCATIONS_EQUITY_TICKERS:
                     sleeve_weight = float(latest_sleeve_weights[ticker])
                     equity_alloc = latest_target_equity_weight * sleeve_weight
                     allocations.append({
@@ -455,14 +460,14 @@ def home():
     """Home endpoint with API documentation"""
     return jsonify({
         "name": "Wealth Utility API",
-        "version": "2.4.0",
+        "version": "2.5.0",
         "endpoints": {
             "/": "This help page",
-            "/allocations": "Get current portfolio allocations for all risk profiles with Dynamic FI sleeve (GET). Query param: profile (optional, returns single profile)",
+            "/allocations": "Get current portfolio allocations for all risk profiles with Dynamic FI sleeve (GET). Query param: profile (optional, returns single profile). Uses separate ALLOCATIONS_EQUITY_TICKERS list",
             "/allocations?profile=moderate": "Get allocations for a specific risk profile (GET). Valid profiles: all_equity, moderate_aggressive, moderate, moderate_conservative, conservative. Note: Uses Dynamic Fixed Income allocation instead of BIL",
             "/allocations/refresh": "Force refresh allocations (POST)",
-            "/backtest": "Run historical backtest with performance metrics (GET). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%), force_refresh",
-            "/backtest/refresh": "Force refresh backtest (POST). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%)",
+            "/backtest": "Run historical backtest with performance metrics (GET). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%), equity_tickers (comma-separated list), force_refresh",
+            "/backtest/refresh": "Force refresh backtest (POST). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%), equity_tickers (comma-separated list)",
             "/config": "Get strategy configuration (GET)",
             "/health": "Health check endpoint (GET)"
         },
@@ -565,8 +570,10 @@ def get_backtest():
     Query parameters:
     - start_date: Optional start date (YYYY-MM-DD format)
     - end_date: Optional end date (YYYY-MM-DD format)
-    - baseline_w: Optional baseline equity weight (0.0 to 1.0, defaults to 1.0)
+    - baseline_w: Optional baseline equity weight (0.0 to 1.0, defaults to BASELINE_W constant)
                   Note: f_max is automatically set to baseline_w + 15% (capped at 100%)
+    - equity_tickers: Optional comma-separated list of equity tickers (e.g., "RPV,QQQ,VTI")
+                      Defaults to EQUITY_TICKER constant from production
     - force_refresh: Set to 'true' to bypass cache
 
     Returns cached data if available and fresh, unless force_refresh=true.
@@ -609,8 +616,28 @@ def get_backtest():
                     "calculation_timestamp": now.isoformat()
                 }), 400
 
+        # Get optional equity_tickers parameter (comma-separated)
+        equity_tickers_str = request.args.get('equity_tickers', None)
+        equity_tickers = None
+        if equity_tickers_str is not None:
+            try:
+                # Split by comma and strip whitespace
+                equity_tickers = [ticker.strip() for ticker in equity_tickers_str.split(',') if ticker.strip()]
+                if len(equity_tickers) == 0:
+                    return jsonify({
+                        "success": False,
+                        "error": "equity_tickers must contain at least one ticker symbol",
+                        "calculation_timestamp": now.isoformat()
+                    }), 400
+            except Exception as e:
+                return jsonify({
+                    "success": False,
+                    "error": f"Invalid equity_tickers format: {str(e)}",
+                    "calculation_timestamp": now.isoformat()
+                }), 400
+
         # Run backtest
-        result = run_backtest(start_date=start_date, end_date=end_date, baseline_w=baseline_w)
+        result = run_backtest(start_date=start_date, end_date=end_date, baseline_w=baseline_w, equity_tickers=equity_tickers)
 
         # Add metadata
         result['success'] = True
@@ -640,8 +667,10 @@ def refresh_backtest():
     Query parameters:
     - start_date: Optional start date (YYYY-MM-DD format)
     - end_date: Optional end date (YYYY-MM-DD format)
-    - baseline_w: Optional baseline equity weight (0.0 to 1.0, defaults to 1.0)
+    - baseline_w: Optional baseline equity weight (0.0 to 1.0, defaults to BASELINE_W constant)
                   Note: f_max is automatically set to baseline_w + 15% (capped at 100%)
+    - equity_tickers: Optional comma-separated list of equity tickers (e.g., "RPV,QQQ,VTI")
+                      Defaults to EQUITY_TICKER constant from production
     """
     # Clear cache
     _backtest_cache['data'] = None
@@ -675,7 +704,27 @@ def refresh_backtest():
                     "calculation_timestamp": now.isoformat()
                 }), 400
 
-        result = run_backtest(start_date=start_date, end_date=end_date, baseline_w=baseline_w)
+        # Get optional equity_tickers parameter (comma-separated)
+        equity_tickers_str = request.args.get('equity_tickers', None)
+        equity_tickers = None
+        if equity_tickers_str is not None:
+            try:
+                # Split by comma and strip whitespace
+                equity_tickers = [ticker.strip() for ticker in equity_tickers_str.split(',') if ticker.strip()]
+                if len(equity_tickers) == 0:
+                    return jsonify({
+                        "success": False,
+                        "error": "equity_tickers must contain at least one ticker symbol",
+                        "calculation_timestamp": now.isoformat()
+                    }), 400
+            except Exception as e:
+                return jsonify({
+                    "success": False,
+                    "error": f"Invalid equity_tickers format: {str(e)}",
+                    "calculation_timestamp": now.isoformat()
+                }), 400
+
+        result = run_backtest(start_date=start_date, end_date=end_date, baseline_w=baseline_w, equity_tickers=equity_tickers)
 
         # Add metadata
         result['success'] = True
@@ -701,7 +750,7 @@ if __name__ == '__main__':
     # Run the Flask development server
     # For production, use a WSGI server like Gunicorn
     print("=" * 80)
-    print("WEALTH UTILITY API SERVER v2.4.0")
+    print("WEALTH UTILITY API SERVER v2.5.0")
     print("=" * 80)
     print("Starting Flask development server...")
     print("API will be available at: http://localhost:5000")
@@ -711,11 +760,13 @@ if __name__ == '__main__':
     print("  GET  http://localhost:5000/allocations")
     print("       Returns all 5 risk profiles (all_equity, moderate_aggressive, moderate,")
     print("       moderate_conservative, conservative) with their allocations")
+    print("       Uses ALLOCATIONS_EQUITY_TICKERS (separate from backtest)")
     print("  GET  http://localhost:5000/allocations?profile=moderate")
     print("       Returns allocation for a specific risk profile")
     print("  POST http://localhost:5000/allocations/refresh")
-    print("  GET  http://localhost:5000/backtest?baseline_w=0.6&start_date=2007-01-01")
+    print("  GET  http://localhost:5000/backtest?baseline_w=0.6&equity_tickers=RPV,QQQ,VTI")
     print("       (Note: f_max automatically set to baseline_w + 15%)")
+    print("       (Note: equity_tickers is comma-separated, defaults to EQUITY_TICKER constant)")
     print("  POST http://localhost:5000/backtest/refresh")
     print("  GET  http://localhost:5000/config")
     print("  GET  http://localhost:5000/health")
