@@ -76,10 +76,97 @@ _backtest_cache = {
     'cache_duration_minutes': 120  # Cache for 2 hours
 }
 
+# Risk profile definitions
+RISK_PROFILES = {
+    'all_equity': {
+        'name': 'All Equity',
+        'baseline_w': 1.0,
+        'description': 'Maximum equity allocation'
+    },
+    'moderate_aggressive': {
+        'name': 'Moderate Aggressive',
+        'baseline_w': 0.80,
+        'description': '80% equity baseline with tactical adjustments'
+    },
+    'moderate': {
+        'name': 'Moderate',
+        'baseline_w': 0.60,
+        'description': '60% equity baseline with tactical adjustments'
+    },
+    'moderate_conservative': {
+        'name': 'Moderate Conservative',
+        'baseline_w': 0.50,
+        'description': '50% equity baseline with tactical adjustments'
+    },
+    'conservative': {
+        'name': 'Conservative',
+        'baseline_w': 0.40,
+        'description': '40% equity baseline with tactical adjustments'
+    }
+}
+
+
+def _calculate_profile_weight(panel, baseline_w, rel_value, rp_anchor, r_mult):
+    """
+    Calculate target weight for a specific baseline_w (risk profile).
+
+    Args:
+        panel: DataFrame with market data
+        baseline_w: Baseline equity weight for this profile
+        rel_value: Relative valuation series
+        rp_anchor: Risk premium anchor value
+        r_mult: Risk multiplier series
+
+    Returns:
+        Series of target weights
+    """
+    # Normalize dials
+    VALUE_DIAL = _to_frac(VALUE_DIAL_FRAC) or 0.0
+    MOM_BUMP = _to_frac(MOM_BUMP_FRAC) or 0.0
+
+    # Value center (based on this profile's baseline)
+    value_bump = baseline_w * VALUE_DIAL * rel_value
+    w_value = (baseline_w + value_bump).clip(0, 1)
+
+    # Momentum bump (based on this profile's baseline)
+    mom_bump = baseline_w * MOM_BUMP * panel["MOM_STATE"]
+    w_uncapped = w_value + mom_bump
+
+    # Band construction
+    if BAND_MODE.lower() == "absolute":
+        base_band = pd.Series(float(BAND_ABS), index=panel.index)
+        band_width = base_band.copy()
+        if RISK_DIAL_MODE.lower() == "band":
+            band_width = (base_band * r_mult).clip(0.0, 1.0)
+        lo = (w_value - band_width).astype(float)
+        hi = (w_value + band_width).astype(float)
+    elif BAND_MODE.lower() == "proportional":
+        CAP_DEV = _to_frac(CAP_DEV_FRAC) or 0.0
+        base_band_prop = (CAP_DEV * w_value).astype(float)
+        band_width = base_band_prop.copy()
+        if RISK_DIAL_MODE.lower() == "band":
+            band_width = (base_band_prop * r_mult).clip(0.0, 1.0)
+        lo = (w_value - band_width).astype(float)
+        hi = (w_value + band_width).astype(float)
+
+    w_capped = w_uncapped.clip(lower=lo, upper=hi)
+
+    if RISK_DIAL_MODE.lower() == "scale":
+        w_capped = (w_capped * r_mult).clip(0.0, 1.0)
+
+    # Final target weight with dynamic f_max
+    f_min_frac = _to_frac(f_min) or 0.0
+    f_max_dynamic = min((baseline_w + 0.15) * 100, 100)
+    f_max_frac = _to_frac(f_max_dynamic) or 1.0
+
+    w_target = w_capped.clip(f_min_frac, f_max_frac).clip(0, 1)
+
+    return w_target
+
 
 def get_current_allocations_json():
     """
-    Calculate current allocations and return as JSON-friendly dict.
+    Calculate current allocations for all risk profiles and return as JSON-friendly dict.
     Uses caching to avoid recalculating on every request.
     """
     now = datetime.now()
@@ -91,14 +178,14 @@ def get_current_allocations_json():
             print(f"[CACHE] Returning cached data (age: {age_minutes:.1f} minutes)")
             return _cache['data']
 
-    print("[CALC] Calculating fresh allocations...")
+    print("[CALC] Calculating fresh allocations for all risk profiles...")
 
     try:
         # Run the calculation
         start = START_DATE
         end = pd.Timestamp.today().strftime("%Y-%m-%d")
 
-        # Load data
+        # Load data (common for all profiles)
         us_val = read_us_valuation_from_excel(ECY_XLSX_PATH, ECY_SHEET)
         tips = fetch_fred_dfii10(start, end, FRED_KEY)
 
@@ -145,10 +232,6 @@ def get_current_allocations_json():
         panel["MOM_STATE"] = np.where(panel["eq_tri"] > maN, 1, -1)
         panel.loc[maN.isna(), "MOM_STATE"] = 0
 
-        # Normalize dials
-        VALUE_DIAL = _to_frac(VALUE_DIAL_FRAC) or 0.0
-        MOM_BUMP = _to_frac(MOM_BUMP_FRAC) or 0.0
-
         # RP anchor
         if RP_ANCHOR_MODE == "median":
             rp_anchor = float(panel["RP"].median(skipna=True))
@@ -157,16 +240,10 @@ def get_current_allocations_json():
         else:
             rp_anchor = float(RP_ANCHOR_FIXED)
 
-        # Value center
+        # Relative value (common for all profiles)
         rel_value = (panel["RP"] / rp_anchor) - 1.0
-        value_bump = BASELINE_W * VALUE_DIAL * rel_value
-        w_value = (BASELINE_W + value_bump).clip(0, 1)
 
-        # Momentum bump
-        mom_bump = BASELINE_W * MOM_BUMP * panel["MOM_STATE"]
-        w_uncapped = w_value + mom_bump
-
-        # Risk dial
+        # Risk dial (common for all profiles)
         equity_ret = panel["eq_ret"].copy()
         realized_vol = equity_ret.rolling(int(RISK_LOOKBACK_M)).std(ddof=0) * np.sqrt(12.0)
 
@@ -185,83 +262,75 @@ def get_current_allocations_json():
         r_raw = r_raw.replace([np.inf, -np.inf], np.nan).fillna(1.0).clip(lower=1e-6, upper=1e6)
         r_mult = (r_raw ** RISK_POWER).clip(lower=RISK_MULT_MIN, upper=RISK_MULT_MAX)
 
-        # Band construction
-        if BAND_MODE.lower() == "absolute":
-            base_band = pd.Series(float(BAND_ABS), index=panel.index)
-            band_width = base_band.copy()
-            if RISK_DIAL_MODE.lower() == "band":
-                band_width = (base_band * r_mult).clip(0.0, 1.0)
-            lo = (w_value - band_width).astype(float)
-            hi = (w_value + band_width).astype(float)
-        elif BAND_MODE.lower() == "proportional":
-            CAP_DEV = _to_frac(CAP_DEV_FRAC) or 0.0
-            base_band_prop = (CAP_DEV * w_value).astype(float)
-            band_width = base_band_prop.copy()
-            if RISK_DIAL_MODE.lower() == "band":
-                band_width = (base_band_prop * r_mult).clip(0.0, 1.0)
-            lo = (w_value - band_width).astype(float)
-            hi = (w_value + band_width).astype(float)
-
-        w_capped = w_uncapped.clip(lower=lo, upper=hi)
-
-        if RISK_DIAL_MODE.lower() == "scale":
-            w_capped = (w_capped * r_mult).clip(0.0, 1.0)
-
-        # Final target weight
-        f_min_frac = _to_frac(f_min) or 0.0
-        f_max_frac = _to_frac(f_max) or 1.0
-        panel["w_target"] = w_capped.clip(f_min_frac, f_max_frac).clip(0, 1)
-
-        # Get latest month's allocation
+        # Get latest month info
         latest_date = panel.index[-1]
-        latest_target_equity_weight = float(panel.loc[latest_date, "w_target"])
-        latest_target_safe_weight = 1.0 - latest_target_equity_weight
-
-        # Get within-sleeve weights
         W_exec_eq = _eq_W_exec.reindex(panel.index).ffill()
         latest_sleeve_weights = W_exec_eq.loc[latest_date]
 
-        # Build allocation JSON
-        allocations = []
+        # Calculate allocations for each risk profile
+        profiles = {}
 
-        if isinstance(EQUITY_TICKER, str):
-            equity_alloc = latest_target_equity_weight * 1.0
-            allocations.append({
-                "ticker": EQUITY_TICKER,
-                "asset_class": "equity",
-                "weight": round(equity_alloc, 4),
-                "weight_pct": f"{equity_alloc:.2%}"
-            })
-        else:
-            for ticker in EQUITY_TICKER:
-                sleeve_weight = float(latest_sleeve_weights[ticker])
-                equity_alloc = latest_target_equity_weight * sleeve_weight
+        for profile_key, profile_config in RISK_PROFILES.items():
+            baseline_w = profile_config['baseline_w']
+
+            # Calculate target weight for this profile
+            w_target = _calculate_profile_weight(panel, baseline_w, rel_value, rp_anchor, r_mult)
+
+            # Get latest allocation
+            latest_target_equity_weight = float(w_target.loc[latest_date])
+            latest_target_safe_weight = 1.0 - latest_target_equity_weight
+
+            # Calculate f_max for this profile
+            f_max_dynamic = min((baseline_w + 0.15) * 100, 100)
+
+            # Build allocation JSON for this profile
+            allocations = []
+
+            if isinstance(EQUITY_TICKER, str):
+                equity_alloc = latest_target_equity_weight * 1.0
                 allocations.append({
-                    "ticker": ticker,
+                    "ticker": EQUITY_TICKER,
                     "asset_class": "equity",
                     "weight": round(equity_alloc, 4),
                     "weight_pct": f"{equity_alloc:.2%}"
                 })
+            else:
+                for ticker in EQUITY_TICKER:
+                    sleeve_weight = float(latest_sleeve_weights[ticker])
+                    equity_alloc = latest_target_equity_weight * sleeve_weight
+                    allocations.append({
+                        "ticker": ticker,
+                        "asset_class": "equity",
+                        "weight": round(equity_alloc, 4),
+                        "weight_pct": f"{equity_alloc:.2%}"
+                    })
 
-        allocations.append({
-            "ticker": NON_EQUITY_TICKER,
-            "asset_class": "fixed_income",
-            "weight": round(latest_target_safe_weight, 4),
-            "weight_pct": f"{latest_target_safe_weight:.2%}"
-        })
+            allocations.append({
+                "ticker": NON_EQUITY_TICKER,
+                "asset_class": "fixed_income",
+                "weight": round(latest_target_safe_weight, 4),
+                "weight_pct": f"{latest_target_safe_weight:.2%}"
+            })
+
+            # Store profile data
+            profiles[profile_key] = {
+                "name": profile_config['name'],
+                "description": profile_config['description'],
+                "baseline_w": baseline_w,
+                "f_max": round(f_max_dynamic / 100, 4),
+                "total_equity": round(latest_target_equity_weight, 4),
+                "total_equity_pct": f"{latest_target_equity_weight:.2%}",
+                "total_safe": round(latest_target_safe_weight, 4),
+                "total_safe_pct": f"{latest_target_safe_weight:.2%}",
+                "allocations": allocations
+            }
 
         # Build response
         result = {
             "success": True,
             "calculation_date": datetime.now().isoformat(),
             "allocation_date": latest_date.strftime("%Y-%m-%d"),
-            "allocations": allocations,
-            "summary": {
-                "total_equity": round(latest_target_equity_weight, 4),
-                "total_equity_pct": f"{latest_target_equity_weight:.2%}",
-                "total_fixed_income": round(latest_target_safe_weight, 4),
-                "total_fixed_income_pct": f"{latest_target_safe_weight:.2%}",
-            },
+            "profiles": profiles,
             "strategy_params": {
                 "sleeve_method": EQUITY_SLEEVE_METHOD,
                 "band_mode": BAND_MODE,
@@ -292,15 +361,25 @@ def home():
     """Home endpoint with API documentation"""
     return jsonify({
         "name": "Wealth Utility API",
-        "version": "2.2.0",
+        "version": "2.3.0",
         "endpoints": {
             "/": "This help page",
-            "/allocations": "Get current portfolio allocations (GET)",
+            "/allocations": "Get current portfolio allocations for all risk profiles (GET). Query param: profile (optional, returns single profile)",
+            "/allocations?profile=moderate": "Get allocations for a specific risk profile (GET). Valid profiles: all_equity, moderate_aggressive, moderate, moderate_conservative, conservative",
             "/allocations/refresh": "Force refresh allocations (POST)",
             "/backtest": "Run historical backtest with performance metrics (GET). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%), force_refresh",
             "/backtest/refresh": "Force refresh backtest (POST). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%)",
             "/config": "Get strategy configuration (GET)",
             "/health": "Health check endpoint (GET)"
+        },
+        "risk_profiles": {
+            profile_key: {
+                "name": config['name'],
+                "baseline_w": config['baseline_w'],
+                "f_max": round(min((config['baseline_w'] + 0.15) * 100, 100) / 100, 4),
+                "description": config['description']
+            }
+            for profile_key, config in RISK_PROFILES.items()
         },
         "status": "online"
     })
@@ -318,10 +397,39 @@ def health():
 @app.route('/allocations', methods=['GET'])
 def get_allocations():
     """
-    Get current portfolio allocations.
+    Get current portfolio allocations for all risk profiles or a specific profile.
+
+    Query parameters:
+    - profile: Optional profile key (all_equity, moderate_aggressive, moderate,
+               moderate_conservative, conservative). If not specified, returns all profiles.
+
     Returns cached data if available and fresh.
     """
     result = get_current_allocations_json()
+
+    # Check if user requested a specific profile
+    profile_key = request.args.get('profile', None)
+
+    if profile_key:
+        # Validate profile exists
+        if profile_key not in RISK_PROFILES:
+            return jsonify({
+                "success": False,
+                "error": f"Invalid profile '{profile_key}'. Valid profiles: {list(RISK_PROFILES.keys())}",
+                "available_profiles": list(RISK_PROFILES.keys())
+            }), 400
+
+        # Return only the requested profile
+        if result['success'] and 'profiles' in result:
+            single_profile_result = {
+                "success": True,
+                "calculation_date": result['calculation_date'],
+                "allocation_date": result['allocation_date'],
+                "profile": result['profiles'][profile_key],
+                "strategy_params": result['strategy_params']
+            }
+            return jsonify(single_profile_result)
+
     return jsonify(result)
 
 
@@ -499,7 +607,7 @@ if __name__ == '__main__':
     # Run the Flask development server
     # For production, use a WSGI server like Gunicorn
     print("=" * 80)
-    print("WEALTH UTILITY API SERVER v2.2.0")
+    print("WEALTH UTILITY API SERVER v2.3.0")
     print("=" * 80)
     print("Starting Flask development server...")
     print("API will be available at: http://localhost:5000")
@@ -507,6 +615,10 @@ if __name__ == '__main__':
     print("Endpoints:")
     print("  GET  http://localhost:5000/")
     print("  GET  http://localhost:5000/allocations")
+    print("       Returns all 5 risk profiles (all_equity, moderate_aggressive, moderate,")
+    print("       moderate_conservative, conservative) with their allocations")
+    print("  GET  http://localhost:5000/allocations?profile=moderate")
+    print("       Returns allocation for a specific risk profile")
     print("  POST http://localhost:5000/allocations/refresh")
     print("  GET  http://localhost:5000/backtest?baseline_w=0.6&start_date=2007-01-01")
     print("       (Note: f_max automatically set to baseline_w + 15%)")
