@@ -105,6 +105,12 @@ RISK_PROFILES = {
     }
 }
 
+# Dynamic Fixed Income configuration (for current allocations only)
+FI_SECURITIES = ["PFF", "USIG", "EMB", "ITM", "LQD", "HYG"]
+FI_RESERVES = ["TLT", "BIL"]
+FI_TICKERS = FI_SECURITIES + FI_RESERVES
+FI_MA_LOOKBACK = 10  # 10-month moving average
+
 
 def _calculate_profile_weight(panel, baseline_w, rel_value, rp_anchor, r_mult):
     """
@@ -164,6 +170,81 @@ def _calculate_profile_weight(panel, baseline_w, rel_value, rp_anchor, r_mult):
     return w_target
 
 
+def build_fi_sleeve_monthly(fi_tickers, start, end, apikey, ma_lookback=10):
+    """
+    Build fixed income sleeve using moving average signals.
+    Returns DataFrame with columns: mret (monthly return), tri (total return index), and weight columns for each FI ticker.
+
+    This function is used ONLY for current allocations display, not for backtesting.
+    """
+    # Download FI data
+    mlist = []
+    price_list = []
+    for s in fi_tickers:
+        d = fetch_fmp_daily(s, start, end, apikey)
+        m = monthly_from_daily_price(d)
+        mlist.append(m[["mret"]].rename(columns={"mret": s}))
+        p = d["price"].resample("M").last().to_frame(name=s)
+        p.index = _to_me(p.index)
+        price_list.append(p)
+
+    R_full = pd.concat(mlist, axis=1).dropna(how="any").sort_index()
+    P_full = pd.concat(price_list, axis=1).reindex(R_full.index).ffill()
+
+    # Calculate moving average signals
+    movingavg = P_full - P_full.rolling(ma_lookback).mean()
+
+    # Determine weights at each rebalance
+    weights_list = []
+    for date in R_full.index:
+        if date not in movingavg.index or movingavg.loc[date].isna().any():
+            # Equal weight during warmup
+            weights_list.append(np.ones(len(fi_tickers)) / len(fi_tickers))
+            continue
+
+        ma_signals = movingavg.loc[date]
+        allocation = {}
+
+        # Check securities (exclude TLT, BIL)
+        securities = [t for t in fi_tickers if t not in ["TLT", "BIL"]]
+        positive_securities = [t for t in securities if ma_signals[t] > 0]
+
+        # Equal weight for positive securities
+        wts = 1.0 / len(securities) if len(securities) > 0 else 0.0
+        reserve_weight = (len(securities) - len(positive_securities)) / len(securities) if len(securities) > 0 else 1.0
+
+        for ticker in fi_tickers:
+            if ticker in positive_securities:
+                allocation[ticker] = wts
+            elif ticker == "TLT":
+                if "TLT" in ma_signals and ma_signals["TLT"] > 0:
+                    allocation[ticker] = reserve_weight
+                else:
+                    allocation[ticker] = 0.0
+            elif ticker == "BIL":
+                if "TLT" in ma_signals and ma_signals["TLT"] <= 0:
+                    allocation[ticker] = reserve_weight
+                else:
+                    allocation[ticker] = 0.0
+            else:
+                allocation[ticker] = 0.0
+
+        weights_list.append([allocation.get(t, 0.0) for t in fi_tickers])
+
+    W_target = pd.DataFrame(weights_list, index=R_full.index, columns=fi_tickers)
+    W_exec = W_target.shift(1).bfill()
+
+    # Calculate sleeve return
+    sleeve_ret = (W_exec * R_full).sum(axis=1)
+    tri = (1.0 + sleeve_ret).cumprod()
+
+    result = pd.DataFrame({"mret": sleeve_ret, "tri": tri}, index=R_full.index)
+    for col in fi_tickers:
+        result[col] = W_exec[col]
+
+    return result
+
+
 def get_current_allocations_json():
     """
     Calculate current allocations for all risk profiles and return as JSON-friendly dict.
@@ -202,10 +283,14 @@ def get_current_allocations_json():
             benchmark_symbol=BENCHMARK_TICKER,
         )
 
+        # Build Fixed Income sleeve (for current allocations display only)
+        print("[CALC] Building Dynamic Fixed Income sleeve...")
+        fi_m = build_fi_sleeve_monthly(FI_TICKERS, start, end, FMP_KEY, ma_lookback=FI_MA_LOOKBACK)
+
         ne_m = monthly_from_daily_price(fetch_fmp_daily(NON_EQUITY_TICKER, start, end, FMP_KEY))
 
-        # Common index
-        idx = eq_m.index.intersection(ne_m.index)
+        # Common index (including FI data)
+        idx = eq_m.index.intersection(ne_m.index).intersection(fi_m.index)
         idx = idx[idx >= pd.to_datetime(START_DATE).to_period("M").to_timestamp("M")]
 
         # Align valuation & TIPS
@@ -267,6 +352,10 @@ def get_current_allocations_json():
         W_exec_eq = _eq_W_exec.reindex(panel.index).ffill()
         latest_sleeve_weights = W_exec_eq.loc[latest_date]
 
+        # Get latest FI sleeve weights
+        W_exec_fi = fi_m[FI_TICKERS].reindex(panel.index).ffill()
+        latest_fi_weights = W_exec_fi.loc[latest_date]
+
         # Calculate allocations for each risk profile
         profiles = {}
 
@@ -286,6 +375,7 @@ def get_current_allocations_json():
             # Build allocation JSON for this profile
             allocations = []
 
+            # Add equity allocations
             if isinstance(EQUITY_TICKER, str):
                 equity_alloc = latest_target_equity_weight * 1.0
                 allocations.append({
@@ -305,12 +395,16 @@ def get_current_allocations_json():
                         "weight_pct": f"{equity_alloc:.2%}"
                     })
 
-            allocations.append({
-                "ticker": NON_EQUITY_TICKER,
-                "asset_class": "fixed_income",
-                "weight": round(latest_target_safe_weight, 4),
-                "weight_pct": f"{latest_target_safe_weight:.2%}"
-            })
+            # Add dynamic FI allocations (replaces single BIL entry)
+            for ticker in FI_TICKERS:
+                fi_sleeve_weight = float(latest_fi_weights[ticker])
+                fi_alloc = latest_target_safe_weight * fi_sleeve_weight
+                allocations.append({
+                    "ticker": ticker,
+                    "asset_class": "fixed_income",
+                    "weight": round(fi_alloc, 4),
+                    "weight_pct": f"{fi_alloc:.2%}"
+                })
 
             # Store profile data
             profiles[profile_key] = {
@@ -361,11 +455,11 @@ def home():
     """Home endpoint with API documentation"""
     return jsonify({
         "name": "Wealth Utility API",
-        "version": "2.3.0",
+        "version": "2.4.0",
         "endpoints": {
             "/": "This help page",
-            "/allocations": "Get current portfolio allocations for all risk profiles (GET). Query param: profile (optional, returns single profile)",
-            "/allocations?profile=moderate": "Get allocations for a specific risk profile (GET). Valid profiles: all_equity, moderate_aggressive, moderate, moderate_conservative, conservative",
+            "/allocations": "Get current portfolio allocations for all risk profiles with Dynamic FI sleeve (GET). Query param: profile (optional, returns single profile)",
+            "/allocations?profile=moderate": "Get allocations for a specific risk profile (GET). Valid profiles: all_equity, moderate_aggressive, moderate, moderate_conservative, conservative. Note: Uses Dynamic Fixed Income allocation instead of BIL",
             "/allocations/refresh": "Force refresh allocations (POST)",
             "/backtest": "Run historical backtest with performance metrics (GET). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%), force_refresh",
             "/backtest/refresh": "Force refresh backtest (POST). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%)",
@@ -607,7 +701,7 @@ if __name__ == '__main__':
     # Run the Flask development server
     # For production, use a WSGI server like Gunicorn
     print("=" * 80)
-    print("WEALTH UTILITY API SERVER v2.3.0")
+    print("WEALTH UTILITY API SERVER v2.4.0")
     print("=" * 80)
     print("Starting Flask development server...")
     print("API will be available at: http://localhost:5000")
