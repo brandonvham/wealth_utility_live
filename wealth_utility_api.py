@@ -110,7 +110,7 @@ RISK_PROFILES = {
 ALLOCATIONS_EQUITY_TICKERS = ["ACWI","COWG","COWZ","EDIV","IWR","JIVE","JMEE","JQUA","MGK","PDBC","REZ"]
 
 # Dynamic Fixed Income configuration (for current allocations only)
-FI_SECURITIES = ["PFF", "USIG", "EMB", "ITM", "LQD", "HYG"]
+FI_SECURITIES = ["PFFD", "FMHI", "VWOB", "SRLN", "ANGL", "ICVT"]
 FI_RESERVES = ["TLT", "BIL"]
 FI_TICKERS = FI_SECURITIES + FI_RESERVES
 FI_MA_LOOKBACK = 10  # 10-month moving average
