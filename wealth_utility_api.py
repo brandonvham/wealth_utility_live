@@ -107,7 +107,7 @@ RISK_PROFILES = {
 
 # Allocations endpoint equity tickers (separate from backtest)
 # This list is used ONLY for /allocations endpoint display
-ALLOCATIONS_EQUITY_TICKERS = ["RPV","RPG","IWR","EFA","QQQ","EEM","VTI","DBC","IYR"]
+ALLOCATIONS_EQUITY_TICKERS = ["ACWI","COWG","COWZ","EDIV","IWR","JIVE","JMEE","JQUA","MGK","PDBC","REZ"]
 
 # Dynamic Fixed Income configuration (for current allocations only)
 FI_SECURITIES = ["PFF", "USIG", "EMB", "ITM", "LQD", "HYG"]
