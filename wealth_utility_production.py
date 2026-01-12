@@ -54,7 +54,7 @@ ECY_XLSX_PATH = os.getenv("ECY_XLSX_PATH", "ecy4.xlsx")
 ECY_SHEET     = "cape"
 
 # Equity tickers
-EQUITY_TICKER = ["ACWI","RPG","IWR","EFA","QQQ","EEM","MGK","DBC","REZ"]
+EQUITY_TICKER = ["RPV","RPG","IWR","EFA","QQQ","EEM","VTI","DBC","IYR"]
 NON_EQUITY_TICKER = "BIL"
 BENCHMARK_TICKER  = "SPY"
 
