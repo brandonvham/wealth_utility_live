@@ -292,13 +292,13 @@ def home():
     """Home endpoint with API documentation"""
     return jsonify({
         "name": "Wealth Utility API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "endpoints": {
             "/": "This help page",
             "/allocations": "Get current portfolio allocations (GET)",
             "/allocations/refresh": "Force refresh allocations (POST)",
-            "/backtest": "Run historical backtest with performance metrics (GET)",
-            "/backtest/refresh": "Force refresh backtest (POST)",
+            "/backtest": "Run historical backtest with performance metrics (GET). Query params: start_date, end_date, baseline_w (0.0-1.0), force_refresh",
+            "/backtest/refresh": "Force refresh backtest (POST). Query params: start_date, end_date, baseline_w (0.0-1.0)",
             "/config": "Get strategy configuration (GET)",
             "/health": "Health check endpoint (GET)"
         },
@@ -363,6 +363,7 @@ def get_backtest():
     Query parameters:
     - start_date: Optional start date (YYYY-MM-DD format)
     - end_date: Optional end date (YYYY-MM-DD format)
+    - baseline_w: Optional baseline equity weight (0.0 to 1.0, defaults to 1.0)
     - force_refresh: Set to 'true' to bypass cache
 
     Returns cached data if available and fresh, unless force_refresh=true.
@@ -386,8 +387,27 @@ def get_backtest():
         start_date = request.args.get('start_date', None)
         end_date = request.args.get('end_date', None)
 
+        # Get optional baseline_w parameter and validate
+        baseline_w_str = request.args.get('baseline_w', None)
+        baseline_w = None
+        if baseline_w_str is not None:
+            try:
+                baseline_w = float(baseline_w_str)
+                if not (0.0 <= baseline_w <= 1.0):
+                    return jsonify({
+                        "success": False,
+                        "error": f"baseline_w must be between 0.0 and 1.0, got {baseline_w}",
+                        "calculation_timestamp": now.isoformat()
+                    }), 400
+            except ValueError:
+                return jsonify({
+                    "success": False,
+                    "error": f"baseline_w must be a number, got '{baseline_w_str}'",
+                    "calculation_timestamp": now.isoformat()
+                }), 400
+
         # Run backtest
-        result = run_backtest(start_date=start_date, end_date=end_date)
+        result = run_backtest(start_date=start_date, end_date=end_date, baseline_w=baseline_w)
 
         # Add metadata
         result['success'] = True
@@ -413,6 +433,11 @@ def get_backtest():
 def refresh_backtest():
     """
     Force refresh backtest (bypass cache).
+
+    Query parameters:
+    - start_date: Optional start date (YYYY-MM-DD format)
+    - end_date: Optional end date (YYYY-MM-DD format)
+    - baseline_w: Optional baseline equity weight (0.0 to 1.0, defaults to 1.0)
     """
     # Clear cache
     _backtest_cache['data'] = None
@@ -427,7 +452,26 @@ def refresh_backtest():
         start_date = request.args.get('start_date', None)
         end_date = request.args.get('end_date', None)
 
-        result = run_backtest(start_date=start_date, end_date=end_date)
+        # Get optional baseline_w parameter and validate
+        baseline_w_str = request.args.get('baseline_w', None)
+        baseline_w = None
+        if baseline_w_str is not None:
+            try:
+                baseline_w = float(baseline_w_str)
+                if not (0.0 <= baseline_w <= 1.0):
+                    return jsonify({
+                        "success": False,
+                        "error": f"baseline_w must be between 0.0 and 1.0, got {baseline_w}",
+                        "calculation_timestamp": now.isoformat()
+                    }), 400
+            except ValueError:
+                return jsonify({
+                    "success": False,
+                    "error": f"baseline_w must be a number, got '{baseline_w_str}'",
+                    "calculation_timestamp": now.isoformat()
+                }), 400
+
+        result = run_backtest(start_date=start_date, end_date=end_date, baseline_w=baseline_w)
 
         # Add metadata
         result['success'] = True
@@ -453,7 +497,7 @@ if __name__ == '__main__':
     # Run the Flask development server
     # For production, use a WSGI server like Gunicorn
     print("=" * 80)
-    print("WEALTH UTILITY API SERVER v2.0.0")
+    print("WEALTH UTILITY API SERVER v2.1.0")
     print("=" * 80)
     print("Starting Flask development server...")
     print("API will be available at: http://localhost:5000")
@@ -462,7 +506,7 @@ if __name__ == '__main__':
     print("  GET  http://localhost:5000/")
     print("  GET  http://localhost:5000/allocations")
     print("  POST http://localhost:5000/allocations/refresh")
-    print("  GET  http://localhost:5000/backtest")
+    print("  GET  http://localhost:5000/backtest?baseline_w=0.6&start_date=2007-01-01")
     print("  POST http://localhost:5000/backtest/refresh")
     print("  GET  http://localhost:5000/config")
     print("  GET  http://localhost:5000/health")

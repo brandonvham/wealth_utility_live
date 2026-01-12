@@ -905,13 +905,14 @@ def perf_stats(nav: pd.Series, rf_monthly: Optional[pd.Series] = None) -> dict:
     return out
 
 
-def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = None) -> dict:
+def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = None, baseline_w: Optional[float] = None) -> dict:
     """
     Run full historical backtest and return performance metrics, equity curves, and allocations.
 
     Args:
         start_date: Optional start date (defaults to START_DATE constant)
         end_date: Optional end date (defaults to today)
+        baseline_w: Optional baseline equity weight (0.0 to 1.0, defaults to BASELINE_W constant)
 
     Returns:
         Dictionary with backtest results including performance metrics, equity curve,
@@ -919,6 +920,13 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
     """
     start = start_date or START_DATE
     end = end_date or _end_date()
+
+    # Use provided baseline_w or default to constant
+    baseline_weight = baseline_w if baseline_w is not None else BASELINE_W
+
+    # Validate baseline_w
+    if not (0.0 <= baseline_weight <= 1.0):
+        raise ValueError(f"baseline_w must be between 0.0 and 1.0, got {baseline_weight}")
 
     # Load data (same as calculate_current_allocations)
     us_val = read_us_valuation_from_excel(ECY_XLSX_PATH, ECY_SHEET)
@@ -983,11 +991,11 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
 
     # Value center
     rel_value = (panel["RP"] / rp_anchor) - 1.0
-    value_bump = BASELINE_W * VALUE_DIAL * rel_value
-    w_value = (BASELINE_W + value_bump).clip(0, 1)
+    value_bump = baseline_weight * VALUE_DIAL * rel_value
+    w_value = (baseline_weight + value_bump).clip(0, 1)
 
     # Momentum bump
-    mom_bump = BASELINE_W * MOM_BUMP * panel["MOM_STATE"]
+    mom_bump = baseline_weight * MOM_BUMP * panel["MOM_STATE"]
     w_uncapped = w_value + mom_bump
 
     # Risk dial
@@ -1040,7 +1048,7 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
     panel["w_exec"] = panel["w_target"].shift(1)
     first_idx = panel["w_exec"].first_valid_index()
     if first_idx is not None and pd.isna(panel.loc[first_idx,"w_exec"]):
-        panel.loc[first_idx,"w_exec"] = BASELINE_W
+        panel.loc[first_idx,"w_exec"] = baseline_weight
     panel["w_exec"] = panel["w_exec"].ffill()
 
     # Backtest
@@ -1052,7 +1060,7 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
 
     panel["port_nav"] = (1 + panel["port_ret"]).cumprod()
     panel["bm_nav"]   = (1 + panel["bm_ret"]).cumprod()
-    panel["alloc_bench_ret"] = BASELINE_W*panel["bm_ret"] + (1-BASELINE_W)*panel["ne_ret"]
+    panel["alloc_bench_ret"] = baseline_weight*panel["bm_ret"] + (1-baseline_weight)*panel["ne_ret"]
     panel["alloc_bench_nav"] = (1 + panel["alloc_bench_ret"]).cumprod()
 
     # Calculate performance stats
@@ -1189,6 +1197,7 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
             "non_equity_ticker": NON_EQUITY_TICKER,
             "benchmark_ticker": BENCHMARK_TICKER,
             "sleeve_method": EQUITY_SLEEVE_METHOD,
+            "baseline_w": baseline_weight,
             "start_date": start,
             "end_date": end
         }
