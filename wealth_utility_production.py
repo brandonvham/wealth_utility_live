@@ -881,7 +881,14 @@ def perf_stats(nav: pd.Series, rf_monthly: Optional[pd.Series] = None) -> dict:
         return {}
     ann = 12
     sqrt_ann = np.sqrt(ann)
-    cagr = nav.iloc[-1]**(ann/len(ret)) - 1
+    # CORRECTED: CAGR formula that properly accounts for starting NAV
+    start_val = nav.iloc[0]
+    end_val = nav.iloc[-1]
+    months = len(ret)
+    if start_val <= 0 or end_val <= 0:
+        cagr = 0.0
+    else:
+        cagr = (end_val / start_val) ** (ann / months) - 1
     vol  = ret.std(ddof=0) * sqrt_ann
     mdd  = (nav / nav.cummax() - 1).min()
     sh_total = (ret.mean() / (ret.std(ddof=0) + 1e-12)) * sqrt_ann
