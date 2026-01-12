@@ -1039,9 +1039,11 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
     if RISK_DIAL_MODE.lower() == "scale":
         w_capped = (w_capped * r_mult).clip(0.0, 1.0)
 
-    # Final target weight
+    # Final target weight with dynamic f_max based on baseline_w
     f_min_frac = _to_frac(f_min) or 0.0
-    f_max_frac = _to_frac(f_max) or 1.0
+    # f_max = baseline_w + 15%, capped at 100%
+    f_max_dynamic = min((baseline_weight + 0.15) * 100, 100)
+    f_max_frac = _to_frac(f_max_dynamic) or 1.0
     panel["w_target"] = w_capped.clip(f_min_frac, f_max_frac).clip(0, 1)
 
     # Execution lag
@@ -1198,6 +1200,8 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
             "benchmark_ticker": BENCHMARK_TICKER,
             "sleeve_method": EQUITY_SLEEVE_METHOD,
             "baseline_w": baseline_weight,
+            "f_min": f_min,
+            "f_max": f_max_dynamic,
             "start_date": start,
             "end_date": end
         }
