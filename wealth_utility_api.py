@@ -216,29 +216,65 @@ def _calculate_profile_weight(panel, baseline_w, rel_value, rp_anchor, r_mult):
     return w_target
 
 
+def fetch_fmp_daily_unadjusted(symbol: str, start: str, end: str, apikey: str) -> pd.DataFrame:
+    """
+    Fetch daily unadjusted close prices from FMP (for MA signals).
+    Similar to fetch_fmp_daily but forces use of unadjusted 'close' price.
+    """
+    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}"
+    params = {"from": start, "to": end, "apikey": apikey, "serietype": "line"}
+    from wealth_utility_production import _HTTP, ensure_unique_index
+    r = _HTTP.get(url, params=params, timeout=30)
+    r.raise_for_status()
+    js = r.json()
+    hist = js.get("historical", [])
+    if not hist:
+        raise ValueError(f"FMP returned no data for {symbol}")
+    df = pd.DataFrame(hist)
+    df["date"] = pd.to_datetime(df["date"])
+    # Force use of unadjusted 'close' column only
+    out = df[["date", "close"]].rename(columns={"close": "price"}).sort_values("date").set_index("date")
+    out = out.asfreq("B").ffill()
+    out = ensure_unique_index(out)
+    return out
+
+
 def build_fi_sleeve_monthly(fi_tickers, start, end, apikey, ma_lookback=10):
     """
     Build fixed income sleeve using moving average signals.
     Returns DataFrame with columns: mret (monthly return), tri (total return index), and weight columns for each FI ticker.
 
     This function is used ONLY for current allocations display, not for backtesting.
+
+    Note: Uses UNADJUSTED prices for MA signals (reflects actual market price action),
+          but ADJUSTED prices for returns (captures total return with dividends).
     """
-    # Download FI data
+    # Download FI data - adjusted prices for returns
     mlist = []
-    price_list = []
+    price_list_adj = []
+    price_list_unadj = []
+
     for s in fi_tickers:
-        d = fetch_fmp_daily(s, start, end, apikey)
-        m = monthly_from_daily_price(d)
+        # Adjusted prices for returns
+        d_adj = fetch_fmp_daily(s, start, end, apikey)
+        m = monthly_from_daily_price(d_adj)
         mlist.append(m[["mret"]].rename(columns={"mret": s}))
-        p = d["price"].resample("M").last().to_frame(name=s)
-        p.index = _to_me(p.index)
-        price_list.append(p)
+        p_adj = d_adj["price"].resample("M").last().to_frame(name=s)
+        p_adj.index = _to_me(p_adj.index)
+        price_list_adj.append(p_adj)
+
+        # Unadjusted prices for MA signals
+        d_unadj = fetch_fmp_daily_unadjusted(s, start, end, apikey)
+        p_unadj = d_unadj["price"].resample("M").last().to_frame(name=s)
+        p_unadj.index = _to_me(p_unadj.index)
+        price_list_unadj.append(p_unadj)
 
     R_full = pd.concat(mlist, axis=1).dropna(how="any").sort_index()
-    P_full = pd.concat(price_list, axis=1).reindex(R_full.index).ffill()
+    P_full_adj = pd.concat(price_list_adj, axis=1).reindex(R_full.index).ffill()
+    P_full_unadj = pd.concat(price_list_unadj, axis=1).reindex(R_full.index).ffill()
 
-    # Calculate moving average signals
-    movingavg = P_full - P_full.rolling(ma_lookback).mean()
+    # Calculate moving average signals using UNADJUSTED prices
+    movingavg = P_full_unadj - P_full_unadj.rolling(ma_lookback).mean()
 
     # Determine weights at each rebalance
     weights_list = []
