@@ -1081,6 +1081,11 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
     _eq_W_exec = _eq_W_exec.loc[_eq_W_exec.index >= start_dt]
     _eq_W_target = _eq_W_target.loc[_eq_W_target.index >= start_dt]
 
+    # Recalculate NAVs from trimmed returns to ensure all start at same point with same number of periods
+    panel["port_nav"] = (1 + panel["port_ret"]).cumprod()
+    panel["bm_nav"] = (1 + panel["bm_ret"]).cumprod()
+    panel["alloc_bench_nav"] = (1 + panel["alloc_bench_ret"]).cumprod()
+
     # Calculate performance stats
     rf_m = panel["tips10"]/12.0
     portfolio_stats = perf_stats(panel["port_nav"], rf_m)
