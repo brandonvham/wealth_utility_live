@@ -476,13 +476,13 @@ def build_equity_sleeve_monthly(
     if isinstance(equity_ticker_or_list, str):
         d = fetch_fmp_daily(equity_ticker_or_list, start_warm, end, apikey)
         m = monthly_from_daily_price(d)
-        m_trim = m.loc[m.index >= start_dt].copy()
+        # Return full dataset including warmup period - trimming will be done by caller
         P = d["price"].resample("M").last().to_frame(name=equity_ticker_or_list)
         P.index = _to_me(P.index)
-        P_trim = P.reindex(m_trim.index).ffill()
-        W_target = pd.DataFrame(1.0, index=m_trim.index, columns=[equity_ticker_or_list])
+        P_full = P.reindex(m.index).ffill()
+        W_target = pd.DataFrame(1.0, index=m.index, columns=[equity_ticker_or_list])
         W_exec   = W_target.copy()
-        return m_trim, W_target, W_exec, P_trim
+        return m, W_target, W_exec, P_full
 
     tickers = list(equity_ticker_or_list)
     if len(tickers) == 0:
@@ -562,17 +562,12 @@ def build_equity_sleeve_monthly(
 
     W_exec_full = W_full.shift(1).bfill()
 
-    mask = R_full.index >= start_dt
-    R = R_full.loc[mask]
-    W_target = W_full.loc[mask]
-    W_exec   = W_exec_full.loc[mask]
-    P_trim   = P_full.loc[mask]
-
-    sleeve_ret = (W_exec * R).sum(axis=1)
+    # Return full dataset including warmup period - trimming will be done by caller
+    sleeve_ret = (W_exec_full * R_full).sum(axis=1)
     tri = (1.0 + sleeve_ret).cumprod()
-    eq_m = pd.DataFrame({"mret": sleeve_ret.astype(float), "tri": tri.astype(float)}, index=R.index)
+    eq_m = pd.DataFrame({"mret": sleeve_ret.astype(float), "tri": tri.astype(float)}, index=R_full.index)
 
-    return eq_m, W_target, W_exec, P_trim
+    return eq_m, W_full, W_exec_full, P_full
 
 
 # ===================== TRADING DAY DETECTION =====================
@@ -663,12 +658,18 @@ def calculate_current_allocations():
     start = START_DATE
     end = _end_date()
 
+    # Calculate warmup period needed for all rolling calculations
+    warmup_months = max(EQUITY_SLEEVE_WARMUP_M, MOM_LOOKBACK_M, RISK_LOOKBACK_M)
+    start_dt = pd.to_datetime(start).to_period("M").to_timestamp("M")
+    warmup_dt = (start_dt - pd.DateOffset(months=warmup_months)).to_period("M").to_timestamp("M")
+    warmup_start = warmup_dt.strftime("%Y-%m-%d")
+
     # Load data
     print("Loading valuation data from Excel...")
     us_val = read_us_valuation_from_excel(ECY_XLSX_PATH, ECY_SHEET)
 
     print("Fetching TIPS data from FRED...")
-    tips = fetch_fred_dfii10(start, end, FRED_KEY)
+    tips = fetch_fred_dfii10(warmup_start, end, FRED_KEY)
 
     print("Building equity sleeve...")
     eq_m, _eq_W_target, _eq_W_exec, _eq_P = build_equity_sleeve_monthly(
@@ -685,11 +686,10 @@ def calculate_current_allocations():
     )
 
     print("Fetching non-equity data...")
-    ne_m = monthly_from_daily_price(fetch_fmp_daily(NON_EQUITY_TICKER, start, end, FMP_KEY))
+    ne_m = monthly_from_daily_price(fetch_fmp_daily(NON_EQUITY_TICKER, warmup_start, end, FMP_KEY))
 
-    # Common index
+    # Common index - include warmup period for calculations
     idx = eq_m.index.intersection(ne_m.index)
-    idx = idx[idx >= pd.to_datetime(START_DATE).to_period("M").to_timestamp("M")]
 
     # Align valuation & TIPS
     rp_used = us_val["RP_USED"].reindex(idx)
@@ -932,11 +932,17 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
     if not (0.0 <= baseline_weight <= 1.0):
         raise ValueError(f"baseline_w must be between 0.0 and 1.0, got {baseline_weight}")
 
+    # Calculate warmup period needed for all rolling calculations
+    warmup_months = max(EQUITY_SLEEVE_WARMUP_M, MOM_LOOKBACK_M, RISK_LOOKBACK_M)
+    start_dt = pd.to_datetime(start).to_period("M").to_timestamp("M")
+    warmup_dt = (start_dt - pd.DateOffset(months=warmup_months)).to_period("M").to_timestamp("M")
+    warmup_start = warmup_dt.strftime("%Y-%m-%d")
+
     # Load data (same as calculate_current_allocations)
     us_val = read_us_valuation_from_excel(ECY_XLSX_PATH, ECY_SHEET)
-    tips = fetch_fred_dfii10(start, end, FRED_KEY)
+    tips = fetch_fred_dfii10(warmup_start, end, FRED_KEY)
 
-    # Use user-provided equity tickers or default
+    # Fetch equity sleeve data with warmup (build_equity_sleeve_monthly handles its own warmup)
     eq_m, _eq_W_target, _eq_W_exec, _eq_P = build_equity_sleeve_monthly(
         equity_ticker_list, start, end, FMP_KEY,
         method=EQUITY_SLEEVE_METHOD,
@@ -950,12 +956,12 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
         benchmark_symbol=BENCHMARK_TICKER,
     )
 
-    ne_m = monthly_from_daily_price(fetch_fmp_daily(NON_EQUITY_TICKER, start, end, FMP_KEY))
-    bm_m = monthly_from_daily_price(fetch_fmp_daily(BENCHMARK_TICKER, start, end, FMP_KEY))
+    # Fetch non-equity and benchmark data with warmup period
+    ne_m = monthly_from_daily_price(fetch_fmp_daily(NON_EQUITY_TICKER, warmup_start, end, FMP_KEY))
+    bm_m = monthly_from_daily_price(fetch_fmp_daily(BENCHMARK_TICKER, warmup_start, end, FMP_KEY))
 
-    # Common index
+    # Common index - include warmup period for calculations
     idx = eq_m.index.intersection(ne_m.index).intersection(bm_m.index)
-    idx = idx[idx >= pd.to_datetime(START_DATE).to_period("M").to_timestamp("M")]
 
     # Align valuation & TIPS
     rp_used = us_val["RP_USED"].reindex(idx)
@@ -1069,6 +1075,11 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
     panel["bm_nav"]   = (1 + panel["bm_ret"]).cumprod()
     panel["alloc_bench_ret"] = baseline_weight*panel["bm_ret"] + (1-baseline_weight)*panel["ne_ret"]
     panel["alloc_bench_nav"] = (1 + panel["alloc_bench_ret"]).cumprod()
+
+    # Trim results to user-specified start date (after all calculations with warmup are complete)
+    panel = panel.loc[panel.index >= start_dt]
+    _eq_W_exec = _eq_W_exec.loc[_eq_W_exec.index >= start_dt]
+    _eq_W_target = _eq_W_target.loc[_eq_W_target.index >= start_dt]
 
     # Calculate performance stats
     rf_m = panel["tips10"]/12.0
