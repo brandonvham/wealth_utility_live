@@ -270,9 +270,15 @@ def get_current_allocations_json():
         start = START_DATE
         end = pd.Timestamp.today().strftime("%Y-%m-%d")
 
+        # Calculate warmup period needed for all rolling calculations
+        warmup_months = max(EQUITY_SLEEVE_WARMUP_M, MOM_LOOKBACK_M, RISK_LOOKBACK_M)
+        start_dt = pd.to_datetime(start).to_period("M").to_timestamp("M")
+        warmup_dt = (start_dt - pd.DateOffset(months=warmup_months)).to_period("M").to_timestamp("M")
+        warmup_start = warmup_dt.strftime("%Y-%m-%d")
+
         # Load data (common for all profiles)
         us_val = read_us_valuation_from_excel(ECY_XLSX_PATH, ECY_SHEET)
-        tips = fetch_fred_dfii10(start, end, FRED_KEY)
+        tips = fetch_fred_dfii10(warmup_start, end, FRED_KEY)
 
         # Use ALLOCATIONS_EQUITY_TICKERS for allocations endpoint (separate from backtest)
         eq_m, _eq_W_target, _eq_W_exec, _eq_P = build_equity_sleeve_monthly(
@@ -290,13 +296,12 @@ def get_current_allocations_json():
 
         # Build Fixed Income sleeve (for current allocations display only)
         print("[CALC] Building Dynamic Fixed Income sleeve...")
-        fi_m = build_fi_sleeve_monthly(FI_TICKERS, start, end, FMP_KEY, ma_lookback=FI_MA_LOOKBACK)
+        fi_m = build_fi_sleeve_monthly(FI_TICKERS, warmup_start, end, FMP_KEY, ma_lookback=FI_MA_LOOKBACK)
 
-        ne_m = monthly_from_daily_price(fetch_fmp_daily(NON_EQUITY_TICKER, start, end, FMP_KEY))
+        ne_m = monthly_from_daily_price(fetch_fmp_daily(NON_EQUITY_TICKER, warmup_start, end, FMP_KEY))
 
-        # Common index (including FI data)
+        # Common index (including FI data) - include warmup period for calculations
         idx = eq_m.index.intersection(ne_m.index).intersection(fi_m.index)
-        idx = idx[idx >= pd.to_datetime(START_DATE).to_period("M").to_timestamp("M")]
 
         # Align valuation & TIPS
         rp_used = us_val["RP_USED"].reindex(idx)
