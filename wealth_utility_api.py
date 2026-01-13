@@ -70,11 +70,53 @@ _cache = {
 }
 
 # Separate cache for backtest results (more expensive computation)
-_backtest_cache = {
-    'data': None,
-    'timestamp': None,
-    'cache_duration_minutes': 480  # Cache for 8 hours (very expensive)
-}
+# Now stores multiple cache entries keyed by parameters
+_backtest_cache = {}
+_backtest_cache_duration_minutes = 480  # Cache for 8 hours (very expensive)
+_backtest_cache_max_entries = 20  # Limit cache size to prevent memory bloat
+
+
+def _get_backtest_cache_key(start_date, end_date, baseline_w, equity_tickers):
+    """Generate a unique cache key from backtest parameters."""
+    # Use defaults if None
+    start = start_date or START_DATE
+    end = end_date or pd.Timestamp.today().strftime("%Y-%m-%d")
+    baseline = baseline_w if baseline_w is not None else BASELINE_W
+    tickers = tuple(equity_tickers) if equity_tickers else tuple(EQUITY_TICKER if isinstance(EQUITY_TICKER, list) else [EQUITY_TICKER])
+
+    return f"{start}|{end}|{baseline}|{tickers}"
+
+
+def _get_cached_backtest(cache_key):
+    """Retrieve cached backtest data if valid."""
+    if cache_key not in _backtest_cache:
+        return None
+
+    entry = _backtest_cache[cache_key]
+    age_minutes = (datetime.now() - entry['timestamp']).total_seconds() / 60
+
+    if age_minutes < _backtest_cache_duration_minutes:
+        print(f"[BACKTEST CACHE] Returning cached data for key: {cache_key[:50]}... (age: {age_minutes:.1f} minutes)")
+        return entry['data']
+    else:
+        # Expired, remove from cache
+        del _backtest_cache[cache_key]
+        return None
+
+
+def _set_cached_backtest(cache_key, data):
+    """Store backtest data in cache with timestamp."""
+    # Limit cache size - remove oldest entries if needed
+    if len(_backtest_cache) >= _backtest_cache_max_entries:
+        oldest_key = min(_backtest_cache.keys(), key=lambda k: _backtest_cache[k]['timestamp'])
+        del _backtest_cache[oldest_key]
+        print(f"[BACKTEST CACHE] Removed oldest cache entry to maintain size limit")
+
+    _backtest_cache[cache_key] = {
+        'data': data,
+        'timestamp': datetime.now()
+    }
+    print(f"[BACKTEST CACHE] Cached data for key: {cache_key[:50]}... (total cached: {len(_backtest_cache)})")
 
 # Risk profile definitions
 RISK_PROFILES = {
@@ -585,62 +627,64 @@ def get_backtest():
     """
     now = datetime.now()
 
+    # Get optional date parameters
+    start_date = request.args.get('start_date', None)
+    end_date = request.args.get('end_date', None)
+
+    # Get optional baseline_w parameter and validate
+    baseline_w_str = request.args.get('baseline_w', None)
+    baseline_w = None
+    if baseline_w_str is not None:
+        try:
+            baseline_w = float(baseline_w_str)
+            if not (0.0 <= baseline_w <= 1.0):
+                return jsonify({
+                    "success": False,
+                    "error": f"baseline_w must be between 0.0 and 1.0, got {baseline_w}",
+                    "calculation_timestamp": now.isoformat()
+                }), 400
+        except ValueError:
+            return jsonify({
+                "success": False,
+                "error": f"baseline_w must be a number, got '{baseline_w_str}'",
+                "calculation_timestamp": now.isoformat()
+            }), 400
+
+    # Get optional equity_tickers parameter (comma-separated)
+    equity_tickers_str = request.args.get('equity_tickers', None)
+    equity_tickers = None
+    if equity_tickers_str is not None:
+        try:
+            # Split by comma and strip whitespace
+            equity_tickers = [ticker.strip() for ticker in equity_tickers_str.split(',') if ticker.strip()]
+            if len(equity_tickers) == 0:
+                return jsonify({
+                    "success": False,
+                    "error": "equity_tickers must contain at least one ticker symbol",
+                    "calculation_timestamp": now.isoformat()
+                }), 400
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": f"Invalid equity_tickers format: {str(e)}",
+                "calculation_timestamp": now.isoformat()
+            }), 400
+
+    # Generate cache key from parameters
+    cache_key = _get_backtest_cache_key(start_date, end_date, baseline_w, equity_tickers)
+
     # Check for force refresh parameter
     force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
 
     # Check if we have cached data that's still valid
-    if not force_refresh and _backtest_cache['data'] is not None and _backtest_cache['timestamp'] is not None:
-        age_minutes = (now - _backtest_cache['timestamp']).total_seconds() / 60
-        if age_minutes < _backtest_cache['cache_duration_minutes']:
-            print(f"[BACKTEST CACHE] Returning cached data (age: {age_minutes:.1f} minutes)")
-            return jsonify(_backtest_cache['data'])
+    if not force_refresh:
+        cached_result = _get_cached_backtest(cache_key)
+        if cached_result is not None:
+            return jsonify(cached_result)
 
     print("[BACKTEST] Calculating fresh backtest...")
 
     try:
-        # Get optional date parameters
-        start_date = request.args.get('start_date', None)
-        end_date = request.args.get('end_date', None)
-
-        # Get optional baseline_w parameter and validate
-        baseline_w_str = request.args.get('baseline_w', None)
-        baseline_w = None
-        if baseline_w_str is not None:
-            try:
-                baseline_w = float(baseline_w_str)
-                if not (0.0 <= baseline_w <= 1.0):
-                    return jsonify({
-                        "success": False,
-                        "error": f"baseline_w must be between 0.0 and 1.0, got {baseline_w}",
-                        "calculation_timestamp": now.isoformat()
-                    }), 400
-            except ValueError:
-                return jsonify({
-                    "success": False,
-                    "error": f"baseline_w must be a number, got '{baseline_w_str}'",
-                    "calculation_timestamp": now.isoformat()
-                }), 400
-
-        # Get optional equity_tickers parameter (comma-separated)
-        equity_tickers_str = request.args.get('equity_tickers', None)
-        equity_tickers = None
-        if equity_tickers_str is not None:
-            try:
-                # Split by comma and strip whitespace
-                equity_tickers = [ticker.strip() for ticker in equity_tickers_str.split(',') if ticker.strip()]
-                if len(equity_tickers) == 0:
-                    return jsonify({
-                        "success": False,
-                        "error": "equity_tickers must contain at least one ticker symbol",
-                        "calculation_timestamp": now.isoformat()
-                    }), 400
-            except Exception as e:
-                return jsonify({
-                    "success": False,
-                    "error": f"Invalid equity_tickers format: {str(e)}",
-                    "calculation_timestamp": now.isoformat()
-                }), 400
-
         # Run backtest
         result = run_backtest(start_date=start_date, end_date=end_date, baseline_w=baseline_w, equity_tickers=equity_tickers)
 
@@ -649,8 +693,7 @@ def get_backtest():
         result['calculation_timestamp'] = now.isoformat()
 
         # Update cache
-        _backtest_cache['data'] = result
-        _backtest_cache['timestamp'] = now
+        _set_cached_backtest(cache_key, result)
 
         return jsonify(result)
 
@@ -677,10 +720,6 @@ def refresh_backtest():
     - equity_tickers: Optional comma-separated list of equity tickers (e.g., "RPV,QQQ,VTI")
                       Defaults to EQUITY_TICKER constant from production
     """
-    # Clear cache
-    _backtest_cache['data'] = None
-    _backtest_cache['timestamp'] = None
-
     # Run fresh backtest
     now = datetime.now()
     print("[BACKTEST] Force refresh requested...")
@@ -729,6 +768,12 @@ def refresh_backtest():
                     "calculation_timestamp": now.isoformat()
                 }), 400
 
+        # Generate cache key and clear only this specific entry
+        cache_key = _get_backtest_cache_key(start_date, end_date, baseline_w, equity_tickers)
+        if cache_key in _backtest_cache:
+            del _backtest_cache[cache_key]
+            print(f"[BACKTEST CACHE] Cleared cache for key: {cache_key[:50]}...")
+
         result = run_backtest(start_date=start_date, end_date=end_date, baseline_w=baseline_w, equity_tickers=equity_tickers)
 
         # Add metadata
@@ -736,8 +781,7 @@ def refresh_backtest():
         result['calculation_timestamp'] = now.isoformat()
 
         # Update cache
-        _backtest_cache['data'] = result
-        _backtest_cache['timestamp'] = now
+        _set_cached_backtest(cache_key, result)
 
         return jsonify(result)
 
