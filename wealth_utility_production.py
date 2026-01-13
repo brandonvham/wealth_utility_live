@@ -1081,6 +1081,14 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
     _eq_W_exec = _eq_W_exec.loc[_eq_W_exec.index >= start_dt]
     _eq_W_target = _eq_W_target.loc[_eq_W_target.index >= start_dt]
 
+    # Drop first row if w_exec is invalid (NaN or 0) due to execution lag shift
+    # This ensures strategy and benchmark start from the same valid date
+    if len(panel) > 0 and (pd.isna(panel.iloc[0]["w_exec"]) or panel.iloc[0]["w_exec"] == 0):
+        first_valid_idx = panel.index[1] if len(panel) > 1 else panel.index[0]
+        panel = panel.loc[panel.index >= first_valid_idx]
+        _eq_W_exec = _eq_W_exec.loc[_eq_W_exec.index >= first_valid_idx]
+        _eq_W_target = _eq_W_target.loc[_eq_W_target.index >= first_valid_idx]
+
     # Recalculate NAVs from trimmed returns to ensure all start at same point with same number of periods
     panel["port_nav"] = (1 + panel["port_ret"]).cumprod()
     panel["bm_nav"] = (1 + panel["bm_ret"]).cumprod()
