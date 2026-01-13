@@ -462,6 +462,7 @@ def build_equity_sleeve_monthly(
     lookback_m: int = 60,
     warmup_m: Optional[int] = None,
     max_cap: float = 0.35,
+    min_weight_per_asset: float = 0.0,
     cov_shrinkage: str = "ledoit_wolf",
     ridge_lambda: float = 0.10,
     clusters: Optional[Dict[str, List[str]]] = None,
@@ -559,6 +560,16 @@ def build_equity_sleeve_monthly(
         W_full = pd.DataFrame(rows, index=R_full.index, columns=tickers)
     else:
         raise ValueError("EQUITY_SLEEVE_METHOD must be 'equal_weight', 'optimized', 'beta_max', or 'max_sharpe'.")
+
+    # Apply minimum weight constraint if specified
+    if min_weight_per_asset > 0:
+        for idx in W_full.index:
+            weights = W_full.loc[idx].values
+            # Set weights below minimum to minimum
+            weights = np.where(weights < min_weight_per_asset, min_weight_per_asset, weights)
+            # Renormalize to sum to 1
+            weights = weights / weights.sum()
+            W_full.loc[idx] = weights
 
     W_exec_full = W_full.shift(1).bfill()
 

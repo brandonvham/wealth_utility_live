@@ -151,6 +151,10 @@ RISK_PROFILES = {
 # This list is used ONLY for /allocations endpoint display
 ALLOCATIONS_EQUITY_TICKERS = ["ACWI","COWG","COWZ","EDIV","IWR","JIVE","JMEE","JQUA","MGK","PDBC","REZ"]
 
+# Minimum weight per asset for allocations endpoint (NOT used in backtest)
+# Set to 0.0 for no minimum, or e.g. 0.05 for 5% minimum per ticker
+ALLOCATIONS_MIN_WEIGHT_PER_ASSET = 0.04  # 5% minimum per ticker
+
 # Dynamic Fixed Income configuration (for current allocations only)
 FI_SECURITIES = ["PFFD", "FMHI", "VWOB", "SRLN", "ANGL", "ICVT"]
 FI_RESERVES = ["TLT", "BIL"]
@@ -365,6 +369,7 @@ def get_current_allocations_json():
             lookback_m=EQUITY_SLEEVE_LOOKBACK_M,
             warmup_m=EQUITY_SLEEVE_WARMUP_M,
             max_cap=EQUITY_MAX_WEIGHT_PER_ASSET,
+            min_weight_per_asset=ALLOCATIONS_MIN_WEIGHT_PER_ASSET,
             cov_shrinkage=EQUITY_COV_SHRINKAGE,
             ridge_lambda=EQUITY_RIDGE_LAMBDA,
             clusters=EQUITY_CLUSTERS,
