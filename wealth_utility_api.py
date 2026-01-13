@@ -548,7 +548,7 @@ def home():
     """Home endpoint with API documentation"""
     return jsonify({
         "name": "Wealth Utility API",
-        "version": "2.5.0",
+        "version": "2.6.0",
         "endpoints": {
             "/": "This help page",
             "/allocations": "Get current portfolio allocations for all risk profiles with Dynamic FI sleeve (GET). Query param: profile (optional, returns single profile). Uses separate ALLOCATIONS_EQUITY_TICKERS list",
@@ -840,7 +840,7 @@ if __name__ == '__main__':
     # Run the Flask development server
     # For production, use a WSGI server like Gunicorn
     print("=" * 80)
-    print("WEALTH UTILITY API SERVER v2.5.0")
+    print("WEALTH UTILITY API SERVER v2.6.0")
     print("=" * 80)
     print("Starting Flask development server...")
     print("API will be available at: http://localhost:5000")

@@ -2,6 +2,8 @@
 
 An automated portfolio allocation system using adaptive risk management, value signals, and momentum indicators.
 
+> **📝 Latest Updates (2026-01-13):** Critical fixes for start date alignment, parameter-specific caching, dual-price FI calculations, and minimum weight configuration. See [CHANGELOG.md](CHANGELOG.md) for details.
+
 ## Features
 
 - **Adaptive Risk Management**: Dynamic allocation based on market conditions
@@ -180,6 +182,7 @@ python test_api.py
 - `QUICK_START.md` - 5-minute setup guide
 - `LOVABLE_INTEGRATION_GUIDE.md` - Web app integration
 - `README_PRODUCTION.md` - Scheduled execution setup
+- `CHANGELOG.md` - Version history and updates
 
 ## Strategy Overview
 
