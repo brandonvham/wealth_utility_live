@@ -916,7 +916,7 @@ def perf_stats(nav: pd.Series, rf_monthly: Optional[pd.Series] = None) -> dict:
     return out
 
 
-def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = None, baseline_w: Optional[float] = None, equity_tickers: Optional[list] = None) -> dict:
+def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = None, baseline_w: Optional[float] = None, equity_tickers: Optional[list] = None, non_equity_ticker: Optional[str] = None, benchmark_ticker: Optional[str] = None) -> dict:
     """
     Run full historical backtest and return performance metrics, equity curves, and allocations.
 
@@ -925,6 +925,8 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
         end_date: Optional end date (defaults to today)
         baseline_w: Optional baseline equity weight (0.0 to 1.0, defaults to BASELINE_W constant)
         equity_tickers: Optional list of equity ticker symbols (defaults to EQUITY_TICKER constant)
+        non_equity_ticker: Optional non-equity ticker symbol (defaults to NON_EQUITY_TICKER constant)
+        benchmark_ticker: Optional benchmark ticker symbol (defaults to BENCHMARK_TICKER constant)
 
     Returns:
         Dictionary with backtest results including performance metrics, equity curve,
@@ -938,6 +940,12 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
 
     # Use provided equity_tickers or default to constant
     equity_ticker_list = equity_tickers if equity_tickers is not None else EQUITY_TICKER
+
+    # Use provided non_equity_ticker or default to constant
+    ne_ticker = non_equity_ticker if non_equity_ticker is not None else NON_EQUITY_TICKER
+
+    # Use provided benchmark_ticker or default to constant
+    bm_ticker = benchmark_ticker if benchmark_ticker is not None else BENCHMARK_TICKER
 
     # Validate baseline_w
     if not (0.0 <= baseline_weight <= 1.0):
@@ -964,12 +972,12 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
         ridge_lambda=EQUITY_RIDGE_LAMBDA,
         clusters=EQUITY_CLUSTERS,
         cluster_risk_budgets=EQUITY_CLUSTER_RISK_BUDGETS,
-        benchmark_symbol=BENCHMARK_TICKER,
+        benchmark_symbol=bm_ticker,
     )
 
     # Fetch non-equity and benchmark data with warmup period
-    ne_m = monthly_from_daily_price(fetch_fmp_daily(NON_EQUITY_TICKER, warmup_start, end, FMP_KEY))
-    bm_m = monthly_from_daily_price(fetch_fmp_daily(BENCHMARK_TICKER, warmup_start, end, FMP_KEY))
+    ne_m = monthly_from_daily_price(fetch_fmp_daily(ne_ticker, warmup_start, end, FMP_KEY))
+    bm_m = monthly_from_daily_price(fetch_fmp_daily(bm_ticker, warmup_start, end, FMP_KEY))
 
     # Common index - include warmup period for calculations
     idx = eq_m.index.intersection(ne_m.index).intersection(bm_m.index)
@@ -1235,9 +1243,9 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
             for month in allocation_history
         ],
         "config": {
-            "equity_tickers": EQUITY_TICKER if isinstance(EQUITY_TICKER, list) else [EQUITY_TICKER],
-            "non_equity_ticker": NON_EQUITY_TICKER,
-            "benchmark_ticker": BENCHMARK_TICKER,
+            "equity_tickers": equity_ticker_list if isinstance(equity_ticker_list, list) else [equity_ticker_list],
+            "non_equity_ticker": ne_ticker,
+            "benchmark_ticker": bm_ticker,
             "sleeve_method": EQUITY_SLEEVE_METHOD,
             "baseline_w": baseline_weight,
             "f_min": f_min,

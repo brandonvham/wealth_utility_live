@@ -76,7 +76,7 @@ _backtest_cache_duration_minutes = 480  # Cache for 8 hours (very expensive)
 _backtest_cache_max_entries = 20  # Limit cache size to prevent memory bloat
 
 
-def _get_backtest_cache_key(start_date, end_date, baseline_w, equity_tickers):
+def _get_backtest_cache_key(start_date, end_date, baseline_w, equity_tickers, index_mode=False):
     """Generate a unique cache key from backtest parameters."""
     # Use defaults if None
     start = start_date or START_DATE
@@ -84,7 +84,7 @@ def _get_backtest_cache_key(start_date, end_date, baseline_w, equity_tickers):
     baseline = baseline_w if baseline_w is not None else BASELINE_W
     tickers = tuple(equity_tickers) if equity_tickers else tuple(EQUITY_TICKER if isinstance(EQUITY_TICKER, list) else [EQUITY_TICKER])
 
-    return f"{start}|{end}|{baseline}|{tickers}"
+    return f"{start}|{end}|{baseline}|{tickers}|index={index_mode}"
 
 
 def _get_cached_backtest(cache_key):
@@ -165,6 +165,11 @@ FI_SECURITIES = ["PFFD", "FMHI", "VWOB", "SRLN", "ANGL", "ICVT"]
 FI_RESERVES = ["TLT", "BIL"]
 FI_TICKERS = FI_SECURITIES + FI_RESERVES
 FI_MA_LOOKBACK = 10  # 10-month moving average
+
+# Index mode ticker configuration (for backtesting to 1999)
+INDEX_EQUITY_TICKERS = ["^GSPC"]
+INDEX_NON_EQUITY_TICKER = "ZNUSD"
+INDEX_BENCHMARK_TICKER = "^GSPC"
 
 
 def _calculate_profile_weight(panel, baseline_w, rel_value, rp_anchor, r_mult):
@@ -553,16 +558,22 @@ def home():
     """Home endpoint with API documentation"""
     return jsonify({
         "name": "Wealth Utility API",
-        "version": "2.6.0",
+        "version": "2.7.0",
         "endpoints": {
             "/": "This help page",
             "/allocations": "Get current portfolio allocations for all risk profiles with Dynamic FI sleeve (GET). Query param: profile (optional, returns single profile). Uses separate ALLOCATIONS_EQUITY_TICKERS list",
-            "/allocations?profile=moderate": "Get allocations for a specific risk profile (GET). Valid profiles: all_equity, moderate_aggressive, moderate, moderate_conservative, conservative. Note: Uses Dynamic Fixed Income allocation instead of BIL",
+            "/allocations?profile=moderate": "Get allocations for a specific risk profile (GET). Valid profiles: all_equity, aggressive, moderate_aggressive, moderate, moderate_conservative, conservative. Note: Uses Dynamic Fixed Income allocation instead of BIL",
             "/allocations/refresh": "Force refresh allocations (POST)",
-            "/backtest": "Run historical backtest with performance metrics (GET). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%), equity_tickers (comma-separated list), force_refresh",
-            "/backtest/refresh": "Force refresh backtest (POST). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%), equity_tickers (comma-separated list)",
+            "/backtest": "Run historical backtest with performance metrics (GET). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%), equity_tickers (comma-separated list), index_mode (true/false for S&P 500 backtesting to 1999), force_refresh",
+            "/backtest/refresh": "Force refresh backtest (POST). Query params: start_date, end_date, baseline_w (0.0-1.0, sets f_max=baseline_w+15%), equity_tickers (comma-separated list), index_mode (true/false)",
             "/config": "Get strategy configuration (GET)",
             "/health": "Health check endpoint (GET)"
+        },
+        "index_mode_config": {
+            "description": "When index_mode=true, uses S&P 500 index for backtesting to 1999",
+            "equity_tickers": INDEX_EQUITY_TICKERS,
+            "non_equity_ticker": INDEX_NON_EQUITY_TICKER,
+            "benchmark_ticker": INDEX_BENCHMARK_TICKER
         },
         "risk_profiles": {
             profile_key: {
@@ -667,6 +678,8 @@ def get_backtest():
                   Note: f_max is automatically set to baseline_w + 15% (capped at 100%)
     - equity_tickers: Optional comma-separated list of equity tickers (e.g., "RPV,QQQ,VTI")
                       Defaults to EQUITY_TICKER constant from production
+    - index_mode: Set to 'true' to use S&P 500 index tickers (^GSPC) for backtesting to 1999
+                  When enabled, overrides equity_tickers parameter
     - force_refresh: Set to 'true' to bypass cache
 
     Returns cached data if available and fresh, unless force_refresh=true.
@@ -696,28 +709,40 @@ def get_backtest():
                 "calculation_timestamp": now.isoformat()
             }), 400
 
-    # Get optional equity_tickers parameter (comma-separated)
-    equity_tickers_str = request.args.get('equity_tickers', None)
-    equity_tickers = None
-    if equity_tickers_str is not None:
-        try:
-            # Split by comma and strip whitespace
-            equity_tickers = [ticker.strip() for ticker in equity_tickers_str.split(',') if ticker.strip()]
-            if len(equity_tickers) == 0:
+    # Check for index_mode parameter (uses S&P 500 index for longer history)
+    index_mode = request.args.get('index_mode', 'false').lower() == 'true'
+
+    # Determine tickers based on index_mode
+    if index_mode:
+        # Use index tickers for backtesting to 1999
+        equity_tickers = INDEX_EQUITY_TICKERS
+        non_equity_ticker = INDEX_NON_EQUITY_TICKER
+        benchmark_ticker = INDEX_BENCHMARK_TICKER
+    else:
+        # Get optional equity_tickers parameter (comma-separated)
+        equity_tickers_str = request.args.get('equity_tickers', None)
+        equity_tickers = None
+        if equity_tickers_str is not None:
+            try:
+                # Split by comma and strip whitespace
+                equity_tickers = [ticker.strip() for ticker in equity_tickers_str.split(',') if ticker.strip()]
+                if len(equity_tickers) == 0:
+                    return jsonify({
+                        "success": False,
+                        "error": "equity_tickers must contain at least one ticker symbol",
+                        "calculation_timestamp": now.isoformat()
+                    }), 400
+            except Exception as e:
                 return jsonify({
                     "success": False,
-                    "error": "equity_tickers must contain at least one ticker symbol",
+                    "error": f"Invalid equity_tickers format: {str(e)}",
                     "calculation_timestamp": now.isoformat()
                 }), 400
-        except Exception as e:
-            return jsonify({
-                "success": False,
-                "error": f"Invalid equity_tickers format: {str(e)}",
-                "calculation_timestamp": now.isoformat()
-            }), 400
+        non_equity_ticker = None  # Use default from production
+        benchmark_ticker = None  # Use default from production
 
     # Generate cache key from parameters
-    cache_key = _get_backtest_cache_key(start_date, end_date, baseline_w, equity_tickers)
+    cache_key = _get_backtest_cache_key(start_date, end_date, baseline_w, equity_tickers, index_mode)
 
     # Check for force refresh parameter
     force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
@@ -728,15 +753,23 @@ def get_backtest():
         if cached_result is not None:
             return jsonify(cached_result)
 
-    print("[BACKTEST] Calculating fresh backtest...")
+    print(f"[BACKTEST] Calculating fresh backtest (index_mode={index_mode})...")
 
     try:
         # Run backtest
-        result = run_backtest(start_date=start_date, end_date=end_date, baseline_w=baseline_w, equity_tickers=equity_tickers)
+        result = run_backtest(
+            start_date=start_date,
+            end_date=end_date,
+            baseline_w=baseline_w,
+            equity_tickers=equity_tickers,
+            non_equity_ticker=non_equity_ticker,
+            benchmark_ticker=benchmark_ticker
+        )
 
         # Add metadata
         result['success'] = True
         result['calculation_timestamp'] = now.isoformat()
+        result['index_mode'] = index_mode
 
         # Update cache
         _set_cached_backtest(cache_key, result)
@@ -765,6 +798,8 @@ def refresh_backtest():
                   Note: f_max is automatically set to baseline_w + 15% (capped at 100%)
     - equity_tickers: Optional comma-separated list of equity tickers (e.g., "RPV,QQQ,VTI")
                       Defaults to EQUITY_TICKER constant from production
+    - index_mode: Set to 'true' to use S&P 500 index tickers (^GSPC) for backtesting to 1999
+                  When enabled, overrides equity_tickers parameter
     """
     # Run fresh backtest
     now = datetime.now()
@@ -794,37 +829,57 @@ def refresh_backtest():
                     "calculation_timestamp": now.isoformat()
                 }), 400
 
-        # Get optional equity_tickers parameter (comma-separated)
-        equity_tickers_str = request.args.get('equity_tickers', None)
-        equity_tickers = None
-        if equity_tickers_str is not None:
-            try:
-                # Split by comma and strip whitespace
-                equity_tickers = [ticker.strip() for ticker in equity_tickers_str.split(',') if ticker.strip()]
-                if len(equity_tickers) == 0:
+        # Check for index_mode parameter (uses S&P 500 index for longer history)
+        index_mode = request.args.get('index_mode', 'false').lower() == 'true'
+
+        # Determine tickers based on index_mode
+        if index_mode:
+            # Use index tickers for backtesting to 1999
+            equity_tickers = INDEX_EQUITY_TICKERS
+            non_equity_ticker = INDEX_NON_EQUITY_TICKER
+            benchmark_ticker = INDEX_BENCHMARK_TICKER
+        else:
+            # Get optional equity_tickers parameter (comma-separated)
+            equity_tickers_str = request.args.get('equity_tickers', None)
+            equity_tickers = None
+            if equity_tickers_str is not None:
+                try:
+                    # Split by comma and strip whitespace
+                    equity_tickers = [ticker.strip() for ticker in equity_tickers_str.split(',') if ticker.strip()]
+                    if len(equity_tickers) == 0:
+                        return jsonify({
+                            "success": False,
+                            "error": "equity_tickers must contain at least one ticker symbol",
+                            "calculation_timestamp": now.isoformat()
+                        }), 400
+                except Exception as e:
                     return jsonify({
                         "success": False,
-                        "error": "equity_tickers must contain at least one ticker symbol",
+                        "error": f"Invalid equity_tickers format: {str(e)}",
                         "calculation_timestamp": now.isoformat()
                     }), 400
-            except Exception as e:
-                return jsonify({
-                    "success": False,
-                    "error": f"Invalid equity_tickers format: {str(e)}",
-                    "calculation_timestamp": now.isoformat()
-                }), 400
+            non_equity_ticker = None  # Use default from production
+            benchmark_ticker = None  # Use default from production
 
         # Generate cache key and clear only this specific entry
-        cache_key = _get_backtest_cache_key(start_date, end_date, baseline_w, equity_tickers)
+        cache_key = _get_backtest_cache_key(start_date, end_date, baseline_w, equity_tickers, index_mode)
         if cache_key in _backtest_cache:
             del _backtest_cache[cache_key]
             print(f"[BACKTEST CACHE] Cleared cache for key: {cache_key[:50]}...")
 
-        result = run_backtest(start_date=start_date, end_date=end_date, baseline_w=baseline_w, equity_tickers=equity_tickers)
+        result = run_backtest(
+            start_date=start_date,
+            end_date=end_date,
+            baseline_w=baseline_w,
+            equity_tickers=equity_tickers,
+            non_equity_ticker=non_equity_ticker,
+            benchmark_ticker=benchmark_ticker
+        )
 
         # Add metadata
         result['success'] = True
         result['calculation_timestamp'] = now.isoformat()
+        result['index_mode'] = index_mode
 
         # Update cache
         _set_cached_backtest(cache_key, result)
@@ -845,7 +900,7 @@ if __name__ == '__main__':
     # Run the Flask development server
     # For production, use a WSGI server like Gunicorn
     print("=" * 80)
-    print("WEALTH UTILITY API SERVER v2.6.0")
+    print("WEALTH UTILITY API SERVER v2.7.0")
     print("=" * 80)
     print("Starting Flask development server...")
     print("API will be available at: http://localhost:5000")
@@ -853,8 +908,8 @@ if __name__ == '__main__':
     print("Endpoints:")
     print("  GET  http://localhost:5000/")
     print("  GET  http://localhost:5000/allocations")
-    print("       Returns all 5 risk profiles (all_equity, moderate_aggressive, moderate,")
-    print("       moderate_conservative, conservative) with their allocations")
+    print("       Returns all 6 risk profiles (all_equity, aggressive, moderate_aggressive,")
+    print("       moderate, moderate_conservative, conservative) with their allocations")
     print("       Uses ALLOCATIONS_EQUITY_TICKERS (separate from backtest)")
     print("  GET  http://localhost:5000/allocations?profile=moderate")
     print("       Returns allocation for a specific risk profile")
@@ -862,6 +917,8 @@ if __name__ == '__main__':
     print("  GET  http://localhost:5000/backtest?baseline_w=0.6&equity_tickers=RPV,QQQ,VTI")
     print("       (Note: f_max automatically set to baseline_w + 15%)")
     print("       (Note: equity_tickers is comma-separated, defaults to EQUITY_TICKER constant)")
+    print("  GET  http://localhost:5000/backtest?index_mode=true")
+    print("       (Uses S&P 500 index tickers for backtesting to 1999)")
     print("  POST http://localhost:5000/backtest/refresh")
     print("  GET  http://localhost:5000/config")
     print("  GET  http://localhost:5000/health")
