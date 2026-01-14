@@ -125,10 +125,15 @@ RISK_PROFILES = {
         'baseline_w': 1.0,
         'description': 'Maximum equity allocation'
     },
-    'moderate_aggressive': {
-        'name': 'Moderate Aggressive',
+    'aggressive': {
+        'name': 'Aggressive',
         'baseline_w': 0.80,
         'description': '80% equity baseline with tactical adjustments'
+    },
+    'moderate_aggressive': {
+        'name': 'Moderate Aggressive',
+        'baseline_w': 0.70,
+        'description': '70% equity baseline with tactical adjustments'
     },
     'moderate': {
         'name': 'Moderate',
