@@ -1108,10 +1108,16 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
         _eq_W_exec = _eq_W_exec.loc[_eq_W_exec.index >= first_valid_idx]
         _eq_W_target = _eq_W_target.loc[_eq_W_target.index >= first_valid_idx]
 
-    # Recalculate NAVs from trimmed returns to ensure all start at same point with same number of periods
-    panel["port_nav"] = (1 + panel["port_ret"]).cumprod()
-    panel["bm_nav"] = (1 + panel["bm_ret"]).cumprod()
-    panel["alloc_bench_nav"] = (1 + panel["alloc_bench_ret"]).cumprod()
+    # Recalculate NAVs from trimmed returns to ensure all start at exactly 1.0 (representing $100)
+    # First calculate raw cumulative product, then normalize by first value
+    port_nav_raw = (1 + panel["port_ret"]).cumprod()
+    bm_nav_raw = (1 + panel["bm_ret"]).cumprod()
+    alloc_bench_nav_raw = (1 + panel["alloc_bench_ret"]).cumprod()
+
+    # Normalize so all series start at exactly 1.0
+    panel["port_nav"] = port_nav_raw / port_nav_raw.iloc[0]
+    panel["bm_nav"] = bm_nav_raw / bm_nav_raw.iloc[0]
+    panel["alloc_bench_nav"] = alloc_bench_nav_raw / alloc_bench_nav_raw.iloc[0]
 
     # Calculate performance stats
     rf_m = panel["tips10"]/12.0
