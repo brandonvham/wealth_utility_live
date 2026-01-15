@@ -1180,7 +1180,7 @@ def run_backtest(start_date: Optional[str] = None, end_date: Optional[str] = Non
                 })
 
         month_alloc["assets"].append({
-            "ticker": NON_EQUITY_TICKER,
+            "ticker": ne_ticker,
             "weight": float(1.0 - panel.loc[dt, "w_exec"])
         })
 
