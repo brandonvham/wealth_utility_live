@@ -222,7 +222,7 @@ def _calculate_profile_weight(panel, baseline_w, rel_value, rp_anchor, r_mult):
 
     # Final target weight with dynamic f_max
     f_min_frac = _to_frac(f_min) or 0.0
-    f_max_dynamic = min((baseline_w + 0.15) * 100, 100)
+    f_max_dynamic = min((baseline_w + 0.10) * 100, 100)
     f_max_frac = _to_frac(f_max_dynamic) or 1.0
 
     w_target = w_capped.clip(f_min_frac, f_max_frac).clip(0, 1)
