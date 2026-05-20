@@ -522,12 +522,31 @@ def get_current_allocations_json():
                 "allocations": allocations
             }
 
+        # Backward-compat: pick the profile whose baseline_w matches BASELINE_W
+        # (closest match) and expose it at the top level as `allocations` + `summary`
+        # so older clients that pre-date the multi-profile refactor keep working.
+        default_profile_key = min(
+            RISK_PROFILES.keys(),
+            key=lambda k: abs(RISK_PROFILES[k]['baseline_w'] - BASELINE_W)
+        )
+        default_profile = profiles[default_profile_key]
+        legacy_allocations = default_profile['allocations']
+        legacy_summary = {
+            "total_equity": default_profile['total_equity'],
+            "total_equity_pct": default_profile['total_equity_pct'],
+            "total_fixed_income": default_profile['total_safe'],
+            "total_fixed_income_pct": default_profile['total_safe_pct'],
+        }
+
         # Build response
         result = {
             "success": True,
             "calculation_date": datetime.now().isoformat(),
             "allocation_date": latest_date.strftime("%Y-%m-%d"),
             "profiles": profiles,
+            "default_profile": default_profile_key,
+            "allocations": legacy_allocations,
+            "summary": legacy_summary,
             "strategy_params": {
                 "sleeve_method": EQUITY_SLEEVE_METHOD,
                 "band_mode": BAND_MODE,
@@ -624,11 +643,23 @@ def get_allocations():
 
         # Return only the requested profile
         if result['success'] and 'profiles' in result:
+            selected = result['profiles'][profile_key]
             single_profile_result = {
                 "success": True,
                 "calculation_date": result['calculation_date'],
                 "allocation_date": result['allocation_date'],
-                "profile": result['profiles'][profile_key],
+                "profile": selected,
+                # Backward-compat: expose the requested profile's allocations and
+                # a legacy `summary` (with total_fixed_income field names) at top
+                # level so older clients that pre-date the multi-profile refactor
+                # keep working.
+                "allocations": selected['allocations'],
+                "summary": {
+                    "total_equity": selected['total_equity'],
+                    "total_equity_pct": selected['total_equity_pct'],
+                    "total_fixed_income": selected['total_safe'],
+                    "total_fixed_income_pct": selected['total_safe_pct'],
+                },
                 "strategy_params": result['strategy_params']
             }
             return jsonify(single_profile_result)
