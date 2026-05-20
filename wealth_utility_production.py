@@ -51,10 +51,9 @@ START_DATE = "2007-01-01"
 
 # Excel file path - use relative path for deployment
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_ECY_PATH = os.path.normpath(
-    os.path.join(BASE_DIR, "..", "..", "08_Data", "Market_Data", "ecy4.xlsx")
-)
+DEFAULT_ECY_PATH = os.path.join(BASE_DIR, "ecy4.xlsx")
 ECY_XLSX_PATH = os.getenv("ECY_XLSX_PATH", DEFAULT_ECY_PATH)
+
 
 ECY_SHEET     = "cape"
 
