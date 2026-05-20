@@ -50,7 +50,7 @@ if not FRED_KEY:
 START_DATE = "2007-01-01"
 
 # Excel file path - use relative path for deployment
-ECY_XLSX_PATH = os.getenv("ECY_XLSX_PATH", "ecy4.xlsx")
+ECY_XLSX_PATH = os.getenv("ECY_XLSX_PATH", "../../08_Data/Market_Data/ecy4.xlsx")
 ECY_SHEET     = "cape"
 
 # Equity tickers
