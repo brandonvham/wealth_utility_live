@@ -273,13 +273,13 @@ def build_fi_sleeve_monthly(fi_tickers, start, end, apikey, ma_lookback=10):
         d_adj = fetch_fmp_daily(s, start, end, apikey)
         m = monthly_from_daily_price(d_adj)
         mlist.append(m[["mret"]].rename(columns={"mret": s}))
-        p_adj = d_adj["price"].resample("M").last().to_frame(name=s)
+        p_adj = d_adj["price"].resample("ME").last().to_frame(name=s)
         p_adj.index = _to_me(p_adj.index)
         price_list_adj.append(p_adj)
 
         # Unadjusted prices for MA signals
         d_unadj = fetch_fmp_daily_unadjusted(s, start, end, apikey)
-        p_unadj = d_unadj["price"].resample("M").last().to_frame(name=s)
+        p_unadj = d_unadj["price"].resample("ME").last().to_frame(name=s)
         p_unadj.index = _to_me(p_unadj.index)
         price_list_unadj.append(p_unadj)
 

@@ -163,7 +163,7 @@ def fetch_fmp_daily(symbol: str, start: str, end: str, apikey: str) -> pd.DataFr
     return out
 
 def monthly_from_daily_price(d: pd.DataFrame) -> pd.DataFrame:
-    m = d.resample("M").last()
+    m = d.resample("ME").last()
     r = m["price"].pct_change().fillna(0.0)
     tri = (1+r).cumprod()
     m.index = _to_me(m.index)
@@ -482,7 +482,7 @@ def build_equity_sleeve_monthly(
         d = fetch_fmp_daily(equity_ticker_or_list, start_warm, end, apikey)
         m = monthly_from_daily_price(d)
         # Return full dataset including warmup period - trimming will be done by caller
-        P = d["price"].resample("M").last().to_frame(name=equity_ticker_or_list)
+        P = d["price"].resample("ME").last().to_frame(name=equity_ticker_or_list)
         P.index = _to_me(P.index)
         P_full = P.reindex(m.index).ffill()
         W_target = pd.DataFrame(1.0, index=m.index, columns=[equity_ticker_or_list])
@@ -497,7 +497,7 @@ def build_equity_sleeve_monthly(
     P_list = []
     for s in tickers:
         d = fetch_fmp_daily(s, start_warm, end, apikey)
-        p = d["price"].resample("M").last().to_frame(name=s)
+        p = d["price"].resample("ME").last().to_frame(name=s)
         p.index = _to_me(p.index)
         P_list.append(p)
     P_full = pd.concat(P_list, axis=1).reindex(R_full.index).ffill()
