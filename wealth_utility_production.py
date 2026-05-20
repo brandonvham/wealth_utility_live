@@ -149,10 +149,11 @@ def _robust_session(total=5, backoff=0.5) -> requests.Session:
 _HTTP = _robust_session()
 
 def fetch_fmp_daily(symbol: str, start: str, end: str, apikey: str) -> pd.DataFrame:
-    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}"
-    params = {"from": start, "to": end, "apikey": apikey, "serietype": "line"}
+    url = "https://financialmodelingprep.com/stable/historical-price-eod/full"
+    params = {"symbol": symbol, "from": start, "to": end, "apikey": apikey}
     r = _HTTP.get(url, params=params, timeout=30); r.raise_for_status()
-    js = r.json(); hist = js.get("historical", [])
+    js = r.json()
+    hist = js if isinstance(js, list) else js.get("historical", [])
     if not hist: raise ValueError(f"FMP returned no data for {symbol}")
     df = pd.DataFrame(hist)
     df["date"] = pd.to_datetime(df["date"])
@@ -599,15 +600,18 @@ def is_last_trading_day_of_month() -> bool:
         now_ct = datetime.now(central)
         today = now_ct.date()
 
-        # Check if today is a trading day using FMP API
-        url = f"https://financialmodelingprep.com/api/v3/is-the-market-open"
-        params = {"apikey": FMP_KEY}
+        # Check if today is a trading day using FMP API (stable endpoint)
+        url = "https://financialmodelingprep.com/stable/is-the-market-open"
+        params = {"exchange": "NYSE", "apikey": FMP_KEY}
         r = _HTTP.get(url, params=params, timeout=10)
         r.raise_for_status()
         market_status = r.json()
+        if isinstance(market_status, list) and market_status:
+            market_status = market_status[0]
 
         # If market is not open today, not a trading day
-        if not market_status.get("isTheStockMarketOpen", False):
+        is_open = market_status.get("isMarketOpen", market_status.get("isTheStockMarketOpen", False))
+        if not is_open:
             return False
 
         # Find next trading day after today

@@ -235,13 +235,13 @@ def fetch_fmp_daily_unadjusted(symbol: str, start: str, end: str, apikey: str) -
     Fetch daily unadjusted close prices from FMP (for MA signals).
     Similar to fetch_fmp_daily but forces use of unadjusted 'close' price.
     """
-    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}"
-    params = {"from": start, "to": end, "apikey": apikey, "serietype": "line"}
+    url = "https://financialmodelingprep.com/stable/historical-price-eod/full"
+    params = {"symbol": symbol, "from": start, "to": end, "apikey": apikey}
     from wealth_utility_production import _HTTP, ensure_unique_index
     r = _HTTP.get(url, params=params, timeout=30)
     r.raise_for_status()
     js = r.json()
-    hist = js.get("historical", [])
+    hist = js if isinstance(js, list) else js.get("historical", [])
     if not hist:
         raise ValueError(f"FMP returned no data for {symbol}")
     df = pd.DataFrame(hist)
