@@ -84,6 +84,7 @@ update_*.txt
 
 # Production allocation output
 current_allocation.txt
+current_allocation.json
 
 # Deployment
 .railway/

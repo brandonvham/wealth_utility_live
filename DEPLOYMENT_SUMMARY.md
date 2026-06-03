@@ -3,7 +3,7 @@
 **Current Version:** v2.5.0
 **Last Updated:** January 12, 2026
 **Status:** ✅ Deployed to Railway
-**URL:** https://wealth-utility-live-production.up.railway.app
+**URL:** https://wealthutilitylive-production.up.railway.app
 
 ---
 
@@ -105,12 +105,12 @@
 
 ## 🌐 API Endpoints (v2.5.0)
 
-**Base URL:** `https://wealth-utility-live-production.up.railway.app`
+**Base URL:** `https://wealthutilitylive-production.up.railway.app`
 
 ### GET /health
 Health check endpoint
 ```bash
-curl https://wealth-utility-live-production.up.railway.app/health
+curl https://wealthutilitylive-production.up.railway.app/health
 ```
 
 ### GET /allocations
@@ -222,12 +222,13 @@ API documentation and available endpoints
 
 ### GitHub Repository
 **URL:** https://github.com/brandonvham/wealth_utility_live
+- GitHub Actions workflow `.github/workflows/monthly-allocation-refresh.yml` handles the production monthly allocation refresh
 - ✅ Auto-deploy to Railway on push to `main`
 - ✅ All commits signed with Claude Code co-authorship
 - ✅ Comprehensive commit history with detailed messages
 
 ### Railway Deployment
-**URL:** https://wealth-utility-live-production.up.railway.app
+**URL:** https://wealthutilitylive-production.up.railway.app
 - ✅ Production environment
 - ✅ Environment variables configured (FMP_KEY, FRED_API_KEY)
 - ✅ Auto-deploy enabled from GitHub
@@ -259,6 +260,17 @@ API documentation and available endpoints
 - **This is what Railway runs** (via Procfile)
 - Serves HTTP requests from Lovable webapp
 
+**`scheduled_refresh.py`** (Scheduled Refresh Runner)
+- Called by GitHub Actions, not Railway
+- Checks the NYSE last-trading-day guard unless `--force` is used
+- Calls the deployed Railway `/allocations/refresh` endpoint
+- Saves `current_allocation.json` as a workflow artifact
+
+**`.github/workflows/monthly-allocation-refresh.yml`** (Production Scheduler)
+- Runs weekdays after market close
+- Installs API dependencies and runs the test suite
+- Supports manual `force_refresh=true` runs from GitHub Actions
+
 ### Data Flow
 ```
 Lovable Webapp
@@ -280,6 +292,18 @@ Cache results & return JSON
 Lovable displays to user
 ```
 
+Scheduled refresh flow:
+
+```text
+GitHub Actions
+    ->
+scheduled_refresh.py
+    ->
+Railway /allocations/refresh
+    ->
+current_allocation.json workflow artifact
+```
+
 ---
 
 ## 📚 Documentation Quick Reference
@@ -291,7 +315,7 @@ Lovable displays to user
 | Review API endpoints | This file (DEPLOYMENT_SUMMARY.md) |
 | Deploy to Railway | `GITHUB_SETUP.md` |
 | Test locally | `QUICK_START.md` |
-| Automate monthly runs | `README_PRODUCTION.md` |
+| Operate production scheduling | `README_PRODUCTION.md` |
 
 ---
 
@@ -391,9 +415,9 @@ e8c6872 - Fix timeout issues (300s timeout, 4-8hr cache)
 
 ## 📞 Support & Resources
 
-**API Documentation:** `GET https://wealth-utility-live-production.up.railway.app/`
+**API Documentation:** `GET https://wealthutilitylive-production.up.railway.app/`
 
-**Health Check:** `GET https://wealth-utility-live-production.up.railway.app/health`
+**Health Check:** `GET https://wealthutilitylive-production.up.railway.app/health`
 
 **GitHub Repo:** https://github.com/brandonvham/wealth_utility_live
 

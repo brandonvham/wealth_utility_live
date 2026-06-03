@@ -153,16 +153,19 @@ RISK_DIAL_MODE = "band"    # Risk adjustment mode
 
 ## Scheduled Production Runs
 
-For automated monthly calculations:
+The production monthly refresh is handled by GitHub Actions. The workflow runs on weekdays after market close and only refreshes allocations when `scheduling.should_run_now()` confirms it is after 5 PM Central on the last NYSE trading day of the month.
 
-### Windows Task Scheduler
+Required GitHub repository secrets:
 
-```powershell
-cd "path/to/Wealth Utility"
-.\setup_scheduler.ps1
-```
+- `FMP_KEY`
+- `FMP_API_KEY`
+- `FRED_API_KEY`
 
-This creates a task that runs daily at 5 PM CT and executes on the last trading day.
+Recommended GitHub repository variable:
+
+- `WEALTH_UTILITY_API_BASE_URL=https://wealthutilitylive-production.up.railway.app`
+
+Windows Task Scheduler scripts remain in the repo as a local fallback only.
 
 ## Testing
 

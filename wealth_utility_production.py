@@ -8,8 +8,7 @@ import os
 import sys
 import warnings
 from typing import Optional, List, Dict, Iterable, Mapping, Tuple
-from datetime import datetime, time
-import pytz
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -17,6 +16,8 @@ from scipy.optimize import minimize
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+import scheduling
 
 # Load environment variables from .env file
 try:
@@ -589,56 +590,10 @@ def build_equity_sleeve_monthly(
 # ===================== TRADING DAY DETECTION =====================
 def is_last_trading_day_of_month() -> bool:
     """
-    Determine if today is the last trading day of the current month.
-
-    Uses FMP market hours API to check trading status.
-    Returns True if today is a trading day and is the last one this month.
+    Determine if today is the last NYSE trading day of the current month.
+    Kept for backward compatibility with local scheduler scripts.
     """
-    try:
-        # Get current date in Central Time
-        central = pytz.timezone('America/Chicago')
-        now_ct = datetime.now(central)
-        today = now_ct.date()
-
-        # Check if today is a trading day using FMP API (stable endpoint)
-        url = "https://financialmodelingprep.com/stable/is-the-market-open"
-        params = {"exchange": "NYSE", "apikey": FMP_KEY}
-        r = _HTTP.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        market_status = r.json()
-        if isinstance(market_status, list) and market_status:
-            market_status = market_status[0]
-
-        # If market is not open today, not a trading day
-        is_open = market_status.get("isMarketOpen", market_status.get("isTheStockMarketOpen", False))
-        if not is_open:
-            return False
-
-        # Find next trading day after today
-        current_year = today.year
-        current_month = today.month
-
-        # Check each remaining day in the month
-        next_day = today + pd.Timedelta(days=1)
-        while next_day.month == current_month:
-            # Use pandas to check if it's a business day (simple heuristic)
-            if next_day.weekday() < 5:  # Monday-Friday
-                # This is likely a trading day, so today is NOT the last
-                return False
-            next_day = next_day + pd.Timedelta(days=1)
-
-        # If we've checked all remaining days and none are trading days, today is last
-        return True
-
-    except Exception as e:
-        print(f"Warning: Could not determine if today is last trading day: {e}")
-        # Fallback: check if it's the last business day of the month
-        today = pd.Timestamp.today().date()
-        last_day = pd.Timestamp(today.year, today.month, 1) + pd.offsets.MonthEnd(0)
-        last_bday = last_day
-        while last_bday.weekday() >= 5:  # Skip weekends
-            last_bday = last_bday - pd.Timedelta(days=1)
-        return today == last_bday.date()
+    return scheduling.is_last_nyse_trading_day()
 
 
 def should_run_now() -> bool:
@@ -646,18 +601,8 @@ def should_run_now() -> bool:
     Check if the script should run right now.
     Must be 5 PM CT or later, and must be the last trading day.
     """
-    central = pytz.timezone('America/Chicago')
-    now_ct = datetime.now(central)
-
-    # Check if it's 5 PM or later
-    target_time = time(17, 0)  # 5:00 PM
-    if now_ct.time() < target_time:
-        print(f"Current time {now_ct.strftime('%I:%M %p CT')} is before 5:00 PM CT. Skipping.")
-        return False
-
-    # Check if it's the last trading day
-    if not is_last_trading_day_of_month():
-        print(f"Today is not the last trading day of the month. Skipping.")
+    if not scheduling.should_run_now():
+        print("Current time is before 5:00 PM CT or today is not the last NYSE trading day. Skipping.")
         return False
 
     return True

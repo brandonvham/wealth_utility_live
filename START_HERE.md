@@ -52,9 +52,14 @@ python wealth_utility_api.py
 4. Done!
 
 ### Schedule Monthly Runs
-```powershell
-.\setup_scheduler.ps1
-```
+
+Production scheduled runs are handled by GitHub Actions:
+
+- Workflow: `.github/workflows/monthly-allocation-refresh.yml`
+- Schedule: weekdays at 23:05 UTC, with an internal guard for last NYSE trading day after 5 PM CT
+- Manual run: GitHub Actions -> Monthly Allocation Refresh -> Run workflow -> `force_refresh=true`
+
+`setup_scheduler.ps1` is a local Windows fallback only.
 
 ### Integrate with Lovable
 1. Deploy API to Railway

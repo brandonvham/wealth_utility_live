@@ -16,7 +16,7 @@ Your project is now ready for GitHub! All sensitive data has been secured:
 ### Step 1: Initialize Git Repository
 
 ```bash
-cd "C:\Users\BrandonVanLandingham\OneDrive - Perissos Private Wealth Management\1 Perissos Private Wealth Management\5 Python\Wealth Utility"
+cd "C:\Users\BrandonVanLandingham\OneDrive - Perissos Private Wealth Management\1 Perissos Private Wealth Management\5 Python\01_Active_Strategies\Wealth Utility API"
 
 # Initialize git (if not already done)
 git init
@@ -45,7 +45,7 @@ git commit -m "Initial commit: Wealth Utility adaptive portfolio allocation syst
 - Core calculation engine with adaptive risk management
 - Flask REST API for web integration
 - React components for Lovable.dev
-- Automated production scheduler
+- GitHub Actions production scheduler
 - Comprehensive documentation
 "
 ```
@@ -54,7 +54,7 @@ git commit -m "Initial commit: Wealth Utility adaptive portfolio allocation syst
 
 1. Go to https://github.com/
 2. Click "+" → "New repository"
-3. Repository name: `wealth-utility` (or your preferred name)
+3. Repository name: `wealth_utility_live`
 4. Description: "Adaptive portfolio allocation with REST API"
 5. Choose **Private** (recommended for financial data)
 6. **DO NOT** initialize with README (we already have one)
@@ -66,7 +66,7 @@ GitHub will show you commands like this:
 
 ```bash
 # Add GitHub as remote
-git remote add origin https://github.com/YOUR_USERNAME/wealth-utility.git
+git remote add origin https://github.com/YOUR_USERNAME/wealth_utility_live.git
 
 # Rename branch to main (if needed)
 git branch -M main
@@ -118,7 +118,7 @@ Once code is on GitHub:
 
 2. **Create New Project**
    - "New Project" → "Deploy from GitHub repo"
-   - Select your `wealth-utility` repository
+   - Select your `wealth_utility_live` repository
 
 3. **Configure Environment Variables**
    - In Railway dashboard, go to "Variables"
@@ -153,6 +153,24 @@ git push
 ```
 
 Railway will automatically redeploy when you push to GitHub!
+
+## Production Scheduler
+
+GitHub Actions is the production scheduler for monthly allocation refreshes.
+
+- Workflow: `.github/workflows/monthly-allocation-refresh.yml`
+- Schedule: weekdays at 23:05 UTC, guarded by `scheduling.should_run_now()`
+- Manual run: Actions -> Monthly Allocation Refresh -> Run workflow -> `force_refresh=true`
+
+Required GitHub repository secrets:
+
+- `FMP_KEY`
+- `FMP_API_KEY`
+- `FRED_API_KEY`
+
+Recommended GitHub repository variable:
+
+- `WEALTH_UTILITY_API_BASE_URL=https://wealthutilitylive-production.up.railway.app`
 
 ## 🌿 Branching Strategy (Optional)
 

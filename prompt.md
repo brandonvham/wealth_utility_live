@@ -2,7 +2,7 @@
 
 ## API Base URL
 ```
-https://wealth-utility-live-production.up.railway.app
+https://wealthutilitylive-production.up.railway.app
 ```
 
 ## Key Changes in v2.5.0
@@ -26,7 +26,7 @@ Returns all 5 risk profiles with Dynamic Fixed Income allocations.
 
 **Example:**
 ```
-GET https://wealth-utility-live-production.up.railway.app/allocations
+GET https://wealthutilitylive-production.up.railway.app/allocations
 ```
 
 **Response includes:**
@@ -52,12 +52,12 @@ Uses the default EQUITY_TICKER constant: `["RPV","RPG","IWR","EFA","QQQ","EEM","
 
 **Example with Custom Tickers:**
 ```
-GET https://wealth-utility-live-production.up.railway.app/backtest?equity_tickers=SPY,QQQ,VTI&baseline_w=0.6&start_date=2010-01-01
+GET https://wealthutilitylive-production.up.railway.app/backtest?equity_tickers=SPY,QQQ,VTI&baseline_w=0.6&start_date=2010-01-01
 ```
 
 **Example without Custom Tickers (uses default):**
 ```
-GET https://wealth-utility-live-production.up.railway.app/backtest?baseline_w=0.6
+GET https://wealthutilitylive-production.up.railway.app/backtest?baseline_w=0.6
 ```
 
 **Important Notes:**
@@ -80,7 +80,7 @@ Force refresh backtest, bypassing cache. Same parameters as GET /backtest.
 
 **Example:**
 ```
-POST https://wealth-utility-live-production.up.railway.app/backtest/refresh?equity_tickers=RPV,QQQ&baseline_w=0.8
+POST https://wealthutilitylive-production.up.railway.app/backtest/refresh?equity_tickers=RPV,QQQ&baseline_w=0.8
 ```
 
 ---
@@ -97,7 +97,7 @@ const [customTickers, setCustomTickers] = useState("");
 
 // Build API URL with custom tickers
 const buildBacktestUrl = (baselineW: number, customTickers?: string) => {
-  const baseUrl = "https://wealth-utility-live-production.up.railway.app/backtest";
+  const baseUrl = "https://wealthutilitylive-production.up.railway.app/backtest";
   const params = new URLSearchParams();
 
   params.append("baseline_w", baselineW.toString());
@@ -130,7 +130,7 @@ const buildBacktestUrl = (baselineW: number, customTickers?: string) => {
 If you don't need custom ticker selection, **no changes required**. Just continue calling:
 
 ```typescript
-const url = `https://wealth-utility-live-production.up.railway.app/backtest?baseline_w=${baselineW}`;
+const url = `https://wealthutilitylive-production.up.railway.app/backtest?baseline_w=${baselineW}`;
 ```
 
 The API will automatically use the default ticker list.

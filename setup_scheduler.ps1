@@ -1,9 +1,10 @@
 # PowerShell script to create Windows Task Scheduler task
 # Run this as Administrator to set up the automatic scheduler
+# Local fallback only. Production scheduling is handled by GitHub Actions.
 
 $TaskName = "Wealth Utility - Monthly Allocation"
 $TaskDescription = "Runs Wealth Utility allocation calculator on the last trading day of each month at 5 PM CT"
-$ScriptPath = "C:\Users\BrandonVanLandingham\OneDrive - Perissos Private Wealth Management\1 Perissos Private Wealth Management\5 Python\Wealth Utility\run_wealth_utility.bat"
+$ScriptPath = Join-Path $PSScriptRoot "run_wealth_utility.bat"
 
 # Create the action (what to run)
 $Action = New-ScheduledTaskAction -Execute $ScriptPath

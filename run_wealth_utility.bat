@@ -1,6 +1,7 @@
 @echo off
 REM Wealth Utility Production Runner
-REM Runs daily at 5 PM CT via Windows Task Scheduler
+REM Local fallback runner. Production scheduling is handled by GitHub Actions.
+REM Runs daily at 5 PM CT via Windows Task Scheduler when configured locally.
 REM Only executes on the last trading day of the month
 
 echo ========================================
@@ -10,7 +11,7 @@ echo Run Time: %date% %time%
 echo.
 
 REM Change to the script directory
-cd /d "C:\Users\BrandonVanLandingham\OneDrive - Perissos Private Wealth Management\1 Perissos Private Wealth Management\5 Python\Wealth Utility"
+cd /d "%~dp0"
 
 REM Run the Python script
 python wealth_utility_production.py

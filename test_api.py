@@ -137,7 +137,7 @@ if __name__ == "__main__":
     print("="*80)
     print("\n⚠️  Make sure the API server is running before testing!")
     print("\nIn another terminal, run:")
-    print("  cd \"C:\\Users\\BrandonVanLandingham\\OneDrive - Perissos Private Wealth Management\\1 Perissos Private Wealth Management\\5 Python\\Wealth Utility\"")
+    print("  cd \"C:\\Users\\BrandonVanLandingham\\OneDrive - Perissos Private Wealth Management\\1 Perissos Private Wealth Management\\5 Python\\01_Active_Strategies\\Wealth Utility API\"")
     print("  python wealth_utility_api.py")
     print("\nPress Enter to start testing...")
     input()

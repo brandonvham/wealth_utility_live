@@ -218,7 +218,7 @@ app.run(debug=True, host='0.0.0.0', port=8000)
 ---
 
 **You now have:**
-- ✅ Scheduled monthly production script (Windows Task Scheduler)
+- ✅ GitHub Actions monthly production scheduler
 - ✅ REST API for web integration (Flask)
 - ✅ React component for Lovable.dev
 - ✅ Test page for quick validation

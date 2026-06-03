@@ -1,0 +1,59 @@
+name: Monthly Allocation Refresh
+
+on:
+  schedule:
+    # GitHub cron is UTC. 23:05 UTC is 5:05 PM CT during standard time
+    # and 6:05 PM CT during daylight time, which keeps the run after market close.
+    - cron: "5 23 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      force_refresh:
+        description: "Bypass the last-trading-day schedule guard"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  refresh-allocations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FMP_KEY: ${{ secrets.FMP_KEY }}
+      FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      WEALTH_UTILITY_API_BASE_URL: ${{ vars.WEALTH_UTILITY_API_BASE_URL || 'https://wealthutilitylive-production.up.railway.app' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements_api.txt
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Refresh allocations
+        shell: bash
+        run: |
+          if [ "${{ github.event.inputs.force_refresh }}" = "true" ]; then
+            python scheduled_refresh.py --force
+          else
+            python scheduled_refresh.py
+          fi
+
+      - name: Upload allocation artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: current-allocation
+          path: current_allocation.json
+          if-no-files-found: ignore

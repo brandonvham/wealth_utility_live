@@ -29,7 +29,7 @@ Lovable.dev displays allocations
 
 1. Install dependencies:
 ```bash
-cd "C:\Users\BrandonVanLandingham\OneDrive - Perissos Private Wealth Management\1 Perissos Private Wealth Management\5 Python\Wealth Utility"
+cd "C:\Users\BrandonVanLandingham\OneDrive - Perissos Private Wealth Management\1 Perissos Private Wealth Management\5 Python\01_Active_Strategies\Wealth Utility API"
 pip install -r requirements_api.txt
 ```
 
@@ -270,16 +270,17 @@ FRED_KEY = os.getenv("FRED_API_KEY")
 
 ## Automated Updates
 
-To automatically refresh allocations on the last trading day:
+Production allocation refreshes are handled by GitHub Actions in this repository.
 
-1. Deploy the API to a platform that supports cron jobs (Railway, Render)
-2. Add a cron job that calls `/allocations/refresh` monthly
-3. Or use the Windows Task Scheduler approach from the production deployment
+- Workflow: `.github/workflows/monthly-allocation-refresh.yml`
+- Schedule: weekdays at 23:05 UTC
+- Guard: `scheduling.should_run_now()` only allows refreshes after 5 PM Central on the last NYSE trading day
+- Manual refresh: GitHub Actions -> Monthly Allocation Refresh -> Run workflow -> `force_refresh=true`
 
-Example cron (runs monthly on the 28th at 5 PM):
-```bash
-0 17 28 * * curl -X POST https://your-api.up.railway.app/allocations/refresh
-```
+Lovable clients should read allocations from the API:
+
+- `GET https://wealthutilitylive-production.up.railway.app/allocations`
+- `GET https://wealthutilitylive-production.up.railway.app/allocations?profile=moderate`
 
 ## Troubleshooting
 
